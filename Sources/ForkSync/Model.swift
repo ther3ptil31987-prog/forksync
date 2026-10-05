@@ -173,8 +173,8 @@ jobs:
           fi
 
           git push --force origin "$UP:refs/heads/upstream-sync"
-          if [ -z "$(gh pr list --head upstream-sync --state open --json number -q '.[].number')" ]; then
-            gh pr create --base "@@BRANCH@@" --head upstream-sync \
+          if [ -z "$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --state open --json number -q '.[].number')" ]; then
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "@@BRANCH@@" --head upstream-sync \
               --title "Sync with upstream" \
               --body "Automatisch erstellt von forksync: neue Aenderungen aus @@UPSTREAM@@."
           fi
