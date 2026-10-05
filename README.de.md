@@ -9,6 +9,7 @@ Mac-App, die deine GitHub-Forks aktuell hält – ohne deine eigenen Commits zu 
 - **Zeitplan per Dropdown** (stündlich bis wöchentlich), läuft als GitHub Action im jeweiligen Fork.
 - **Sofort syncen** per Knopfdruck, auch wenn das Original Workflow-Dateien ändert.
 - **Anmeldung per GitHub** (Device-Flow), das Token liegt im macOS-Schlüsselbund. Alternativ wird eine vorhandene `gh`-Anmeldung genutzt.
+- **Lokale Klone aktuell halten**: Repos auswählen, ForkSync klont sie in einen Ordner auf dem Mac, vergleicht lokalen und GitHub-Stand und holt Rückstände per Fast-Forward, manuell oder zeitgesteuert, solange die App läuft. Lokale Änderungen und abweichende Historien bleiben unberührt, es wird nie gepusht.
 - **Sichtbarkeit eigener Repos** (öffentlich/privat) mit deutlichen Warnhinweisen umschalten.
 - **Deutsche und englische Oberfläche**, umschaltbar in der Toolbar.
 

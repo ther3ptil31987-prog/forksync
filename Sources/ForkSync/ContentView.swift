@@ -1,9 +1,15 @@
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case forks, repos
+    case forks, repos, local
     var id: String { rawValue }
-    var title: String { self == .forks ? "Forks" : tr("Meine Repos", "My repos") }
+    var title: String {
+        switch self {
+        case .forks: "Forks"
+        case .repos: tr("Meine Repos", "My repos")
+        case .local: tr("Auf dem Mac", "On this Mac")
+        }
+    }
 }
 
 struct ContentView: View {
@@ -29,6 +35,8 @@ struct ContentView: View {
                 ErrorView(message: fatal)
             } else if page == .repos {
                 RepoView(search: search)
+            } else if page == .local {
+                LocalView(search: search)
             } else {
                 if store.missingWorkflowScope {
                     Label(tr("gh fehlt der Scope „workflow“ – im Terminal: gh auth refresh -s workflow", "gh is missing the “workflow” scope – run in Terminal: gh auth refresh -s workflow"),
@@ -68,7 +76,7 @@ struct ContentView: View {
                     ForEach(Page.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 220)
+                .frame(width: 340)
             }
             ToolbarItem(placement: .primaryAction) {
                 Picker("", selection: $lang) {

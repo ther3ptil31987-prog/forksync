@@ -12,6 +12,23 @@ struct ForkSyncApp: App {
                 .frame(minWidth: 1180, minHeight: 540)
                 .task {
                     await store.refresh()
+                    if let root = ProcessInfo.processInfo.environment["FORKSYNC_LOCALTEST"] {
+                        // Debug: Klonen/Abgleich headless gegen ein Testverzeichnis (echte Einstellungen bleiben unberührt)
+                        setbuf(stdout, nil)
+                        await store.loadRepos()
+                        print("repos=\(store.repos.count)")
+                        store.localRoot = root
+                        let pick = store.repos.filter { !$0.isFork && !$0.isPrivate }.prefix(2).map(\.full)
+                        store.localEnabled = Set(pick)
+                        print("enabled=\(store.localEnabled)")
+                        await store.syncLocal()
+                        for r in store.local.values.sorted(by: { $0.id < $1.id }) {
+                            print("\(r.id): \(r.state) ahead=\(r.ahead) behind=\(r.behind) dirty=\(r.dirty) \(r.detail)")
+                        }
+                        for l in store.log.suffix(6) { print("LOG \(l.kind.rawValue): \(l.text)") }
+                        NSApp.terminate(nil)
+                    }
+                    store.startLocalAuto()
                     if let path = ProcessInfo.processInfo.environment["FORKSYNC_SNAPSHOT"] {
                         try? await Task.sleep(for: .seconds(2))
                         for f in store.forks where f.ahead > 0 || f.parentBranch != f.branch {

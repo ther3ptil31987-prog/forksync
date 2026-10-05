@@ -9,6 +9,7 @@ A Mac app that keeps your GitHub forks up to date – without losing your own co
 - **Schedule via dropdown** (hourly to weekly), runs as a GitHub Action inside each fork.
 - **Sync now** with one click, even when upstream changes workflow files.
 - **Sign in with GitHub** (device flow); the token is stored in the macOS keychain. An existing `gh` login is used as a fallback.
+- **Keep local clones in sync**: pick repos, ForkSync clones them into a folder on your Mac, compares local and GitHub state and fast-forwards what is behind, manually or on a schedule while the app runs. Local changes and diverged histories are never touched, nothing is ever pushed.
 - **Change repo visibility** (public/private) with prominent warnings.
 - **German and English interface**, switchable in the toolbar.
 

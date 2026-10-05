@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 
 @MainActor
 final class Store: ObservableObject {
@@ -18,6 +19,16 @@ final class Store: ObservableObject {
     @Published var loginError: String?
     @Published var ownLogin = Auth.token != nil
     private var loginTask: Task<Void, Never>?
+    // Lokaler Abgleich (Klone auf dem Mac)
+    @Published var local: [String: LocalRepo] = [:]
+    @Published var localBusy = false
+    @Published var localLast: Date?
+    @Published var localRoot = LocalPrefs.root { didSet { LocalPrefs.root = localRoot } }
+    @Published var localEnabled = LocalPrefs.enabled { didSet { LocalPrefs.enabled = localEnabled } }
+    @Published var localAuto = LocalPrefs.auto { didSet { LocalPrefs.auto = localAuto; startLocalAuto() } }
+    @Published var localInterval = LocalPrefs.interval { didSet { LocalPrefs.interval = localInterval; startLocalAuto() } }
+    @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
+    var localTask: Task<Void, Never>?
 
     func login() {
         loginError = nil
