@@ -58,7 +58,7 @@ struct RepoView: View {
                 List(visible) { repo in
                     RepoRow(repo: repo) { pending = repo }
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .listStyle(.inset)
             }
             Divider()
             Label(tr("Vorsicht: Eine Änderung der Sichtbarkeit ist folgenreich und lässt sich nicht immer vollständig rückgängig machen. Nutzung auf eigene Verantwortung, keine Haftung.",

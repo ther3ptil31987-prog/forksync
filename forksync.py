@@ -86,8 +86,16 @@ jobs:
           if [ "@@MODE@@" = "auto" ]; then
             git config user.name "forksync"
             git config user.email "forksync@users.noreply.github.com"
-            if git merge --no-edit "$UP" && git push origin "HEAD:refs/heads/@@BRANCH@@"; then
-              echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+            if git merge --no-edit "$UP"; then
+              if git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+                echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+              fi
+              git reset --hard "origin/@@BRANCH@@"
+              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+                echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
+              fi
+              echo "::error::Merge sauber, aber Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+              exit 1
             fi
             git merge --abort 2>/dev/null || true
             git reset --hard "origin/@@BRANCH@@"

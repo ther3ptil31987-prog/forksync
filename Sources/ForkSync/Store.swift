@@ -142,6 +142,11 @@ final class Store: ObservableObject {
             if let f = try? await GH.api("repos/\(full)/contents/\(WorkflowTemplate.wfPath)?ref=\(branch)") as? [String: Any],
                let sha = f["sha"] as? String {
                 fork.workflowSha = sha
+                if fork.behind > 0,
+                   let runs = try? await GH.api("repos/\(full)/actions/workflows/\(WorkflowTemplate.wfName)/runs?per_page=1&status=completed") as? [String: Any],
+                   let last = (runs["workflow_runs"] as? [[String: Any]])?.first {
+                    fork.syncFailed = (last["conclusion"] as? String) == "failure"
+                }
                 let b64 = (f["content"] as? String) ?? ""
                 if let d = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
                    let text = String(data: d, encoding: .utf8),
@@ -181,6 +186,9 @@ final class Store: ObservableObject {
 
     // MARK: Aktionen
 
+    /// Alle Forks ohne Auto-Sync (und ohne Fehler) für „Alle einrichten“.
+    var setupAllIDs: Set<String> { Set(forks.filter { !$0.hasAutoSync && $0.error == nil }.map(\.id)) }
+
     func install(_ ids: Set<String>, mode: SyncMode?, runAfter: Bool = true) async {
         for fork in forks where ids.contains(fork.id) {
             busy.insert(fork.id)
@@ -217,6 +225,7 @@ final class Store: ObservableObject {
             }
         }
         if !(await enableWorkflow(f)) { notes.append(tr("Workflow konnte nicht aktiviert werden (Reiter „Actions“ des Forks)", "Workflow could not be enabled (Actions tab of the fork)")) }
+        if f.behind > 0 { await mergeUpstream(f) }
         if runAfter, !(await dispatch(f)) { notes.append(tr("Testlauf konnte nicht gestartet werden", "Test run could not be started")) }
         add(.ok, tr("\(f.name): eingerichtet (Modus \(mode.rawValue))", "\(f.name): set up (mode \(mode.rawValue))"))
         notes.forEach { add(.warn, "\(f.name): \($0)") }
@@ -233,21 +242,25 @@ final class Store: ObservableObject {
     func syncNow(_ ids: Set<String>) async {
         for f in forks where ids.contains(f.id) && f.error == nil {
             busy.insert(f.id)
-            do {
-                let r = try await GH.api("repos/\(f.full)/merge-upstream", method: "POST", body: ["branch": f.branch]) as? [String: Any]
-                switch r?["merge_type"] as? String {
-                case "none": add(.ok, tr("\(f.name): schon aktuell", "\(f.name): already up to date"))
-                case "fast-forward": add(.ok, tr("\(f.name): Fast-Forward durchgeführt", "\(f.name): fast-forwarded"))
-                default: add(.ok, tr("\(f.name): Original eingemergt, eigene Commits bleiben erhalten", "\(f.name): upstream merged, own commits kept"))
-                }
-            } catch {
-                let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
-                let conflict = msg.lowercased().contains("conflict") ? tr(" → Konflikt, bitte auf GitHub manuell lösen", " → conflict, please resolve manually on GitHub") : ""
-                add(.fail, "\(f.name): \(msg)\(conflict)")
-            }
+            await mergeUpstream(f)
             busy.remove(f.id)
         }
         await refresh()
+    }
+
+    private func mergeUpstream(_ f: Fork) async {
+        do {
+            let r = try await GH.api("repos/\(f.full)/merge-upstream", method: "POST", body: ["branch": f.branch]) as? [String: Any]
+            switch r?["merge_type"] as? String {
+            case "none": add(.ok, tr("\(f.name): schon aktuell", "\(f.name): already up to date"))
+            case "fast-forward": add(.ok, tr("\(f.name): Fast-Forward durchgeführt", "\(f.name): fast-forwarded"))
+            default: add(.ok, tr("\(f.name): Original eingemergt, eigene Commits bleiben erhalten", "\(f.name): upstream merged, own commits kept"))
+            }
+        } catch {
+            let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
+            let conflict = msg.lowercased().contains("conflict") ? tr(" → Konflikt, bitte auf GitHub manuell lösen", " → conflict, please resolve manually on GitHub") : ""
+            add(.fail, "\(f.name): \(msg)\(conflict)")
+        }
     }
 
     /// Forks starten mit deaktivierten Workflows (disabled_fork) - einzeln aktivieren.

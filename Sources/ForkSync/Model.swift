@@ -29,6 +29,8 @@ struct Fork: Identifiable, Hashable {
     var ownCommits: Bool { ahead > 0 && aheadKind == .own }
     var behind = 0    // neue Commits im Original
     var workflowSha: String?
+    /// Letzter Auto-Sync-Lauf im Fork ist fehlgeschlagen und der Fork hängt hinterher (z. B. Workflow-Sperre).
+    var syncFailed = false
     var workflowMode: SyncMode?
     var error: String?
     var url: URL { URL(string: "https://github.com/\(full)")! }
@@ -61,6 +63,8 @@ struct Fork: Identifiable, Hashable {
         case (.ahead, .own): return tr(ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits",
                                       ahead == 1 ? "1 own commit" : "\(ahead) own commits")
         case (.diverged, .own): return tr("Getrennt: \(ahead) eigene / \(behind) neue", "Diverged: \(ahead) own / \(behind) new")
+        case (.diverged, .bot): return tr(ahead == 1 ? "1 Sync-Commit / \(behind) neu" : "\(ahead) Sync-Commits / \(behind) neu",
+                                         ahead == 1 ? "1 sync commit / \(behind) new" : "\(ahead) sync commits / \(behind) new")
         case (.diverged, _): return tr("Historie umgeschrieben: \(ahead) alt / \(behind) neu", "History rewritten: \(ahead) old / \(behind) new")
         case (.error, _): return tr("Fehler", "Error")
         }
@@ -88,12 +92,13 @@ struct Fork: Identifiable, Hashable {
 }
 
 enum Filter: String, CaseIterable, Identifiable {
-    case all, behind, own, auto, off
+    case all, behind, failed, own, auto, off
     var id: String { rawValue }
     var title: String {
         switch self {
         case .all: tr("Alle", "All")
         case .behind: tr("Hinterher", "Behind")
+        case .failed: tr("Fehlgeschlagen", "Failed")
         case .own: tr("Eigene Commits", "Own commits")
         case .auto: "Auto-Sync"
         case .off: tr("Ohne Auto-Sync", "No auto-sync")
@@ -103,6 +108,7 @@ enum Filter: String, CaseIterable, Identifiable {
         switch self {
         case .all: true
         case .behind: f.behind > 0
+        case .failed: f.syncFailed
         case .own: f.ownCommits
         case .auto: f.hasAutoSync
         case .off: !f.hasAutoSync && f.error == nil
@@ -213,8 +219,16 @@ jobs:
           if [ "@@MODE@@" = "auto" ]; then
             git config user.name "forksync"
             git config user.email "forksync@users.noreply.github.com"
-            if git merge --no-edit "$UP" && git push origin "HEAD:refs/heads/@@BRANCH@@"; then
-              echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+            if git merge --no-edit "$UP"; then
+              if git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+                echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+              fi
+              git reset --hard "origin/@@BRANCH@@"
+              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+                echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
+              fi
+              echo "::error::Merge sauber, aber Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+              exit 1
             fi
             git merge --abort 2>/dev/null || true
             git reset --hard "origin/@@BRANCH@@"

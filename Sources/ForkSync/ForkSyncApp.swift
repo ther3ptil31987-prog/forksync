@@ -9,7 +9,7 @@ struct ForkSyncApp: App {
         WindowGroup("ForkSync") {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 940, minHeight: 540)
+                .frame(minWidth: 1180, minHeight: 540)
                 .task {
                     await store.refresh()
                     if let path = ProcessInfo.processInfo.environment["FORKSYNC_SNAPSHOT"] {

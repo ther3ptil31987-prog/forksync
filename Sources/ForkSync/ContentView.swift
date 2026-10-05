@@ -17,6 +17,7 @@ struct ContentView: View {
     @AppStorage("forksync.disclaimerAccepted") private var accepted = false
     @State private var showDisclaimer = false
     @State private var confirmRemove = false
+    @State private var confirmSetupAll = false
 
     private var visible: [Fork] {
         store.forks.filter { filter.matches($0) && (search.isEmpty || $0.full.localizedCaseInsensitiveContains(search)) }
@@ -43,8 +44,8 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(maxWidth: 520)
-                    Spacer()
+                    .fixedSize()
+                    Spacer(minLength: 12)
                     Text(tr("\(visible.count) von \(store.forks.count) Forks", "\(visible.count) of \(store.forks.count) forks"))
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -52,7 +53,7 @@ struct ContentView: View {
                 Divider()
                 list
                 Divider()
-                ActionBar(selection: selection, showLog: $showLog, confirmRemove: $confirmRemove)
+                ActionBar(selection: selection, showLog: $showLog, confirmRemove: $confirmRemove, confirmSetupAll: $confirmSetupAll)
             }
         }
         .id(lang)
@@ -104,6 +105,15 @@ struct ContentView: View {
                             isPresented: $confirmRemove, titleVisibility: .visible) {
             Button(tr("Entfernen", "Remove"), role: .destructive) { Task { await store.remove(selection) } }
         }
+        .confirmationDialog(tr("Auto-Sync in \(store.setupAllIDs.count) Forks einrichten?", "Set up auto-sync in \(store.setupAllIDs.count) forks?"),
+                            isPresented: $confirmSetupAll, titleVisibility: .visible) {
+            Button(tr("Alle einrichten (\(store.modeChoice.title))", "Set up all (\(store.modeChoice.title))")) {
+                Task { await store.install(store.setupAllIDs, mode: store.modeChoice, runAfter: false) }
+            }
+        } message: {
+            Text(tr("Schreibt in jeden Fork ohne Auto-Sync die Datei .github/workflows/upstream-sync.yml. Der erste Lauf erfolgt zum eingestellten Zeitplan.",
+                    "Writes .github/workflows/upstream-sync.yml into every fork without auto-sync. The first run happens at the configured schedule."))
+        }
     }
 
     private var list: some View {
@@ -118,7 +128,7 @@ struct ContentView: View {
                                        description: Text(store.forks.isEmpty ? tr("Dein Account hat keine Forks.", "Your account has no forks.") : tr("Kein Fork passt zum Filter.", "No fork matches the filter.")))
             } else {
                 List(visible, selection: $selection) { fork in
-                    ForkRow(fork: fork, busy: store.busy.contains(fork.id))
+                    ForkRow(fork: fork, busy: store.busy.contains(fork.id)) { Task { await store.syncNow([fork.id]) } }
                         .tag(fork.id)
                         .contextMenu {
                             Button(tr("Auf GitHub öffnen", "Open on GitHub")) { NSWorkspace.shared.open(fork.url) }
@@ -127,7 +137,7 @@ struct ContentView: View {
                             }
                         }
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .listStyle(.inset)
             }
         }
     }
@@ -136,6 +146,7 @@ struct ContentView: View {
 struct ForkRow: View {
     let fork: Fork
     let busy: Bool
+    let onSync: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -144,16 +155,23 @@ struct ForkRow: View {
                 .foregroundStyle(fork.stateColor)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
-                Text(fork.name).font(.headline)
+                Text(fork.name).font(.headline).lineLimit(1)
                 Text(fork.parent.map { tr("Fork von \($0)", "Fork of \($0)") } ?? fork.full)
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
+            .layoutPriority(-1)
+            Spacer(minLength: 8)
             Text(fork.statusText)
                 .font(.callout)
                 .foregroundStyle(fork.stateColor)
+                .lineLimit(1).fixedSize()
                 .padding(.horizontal, 10).padding(.vertical, 3)
                 .background(fork.stateColor.opacity(0.12), in: Capsule())
+            if fork.syncFailed && fork.behind > 0 && fork.error == nil && !busy {
+                Button(action: onSync) { Label(tr("Syncen", "Sync"), systemImage: "arrow.triangle.2.circlepath") }
+                    .controlSize(.small)
+                    .help(tr("Auto-Sync ist fehlgeschlagen (z. B. weil das Original Workflow-Dateien ändert). Jetzt mit deinem Login syncen.", "Auto-sync failed (e.g. because the original changes workflow files). Sync now with your login."))
+            }
             Group {
                 if busy { ProgressView().controlSize(.small) }
                 else if let mode = fork.workflowMode ?? (fork.hasAutoSync ? .ff : nil) {
@@ -176,6 +194,7 @@ struct ActionBar: View {
     let selection: Set<String>
     @Binding var showLog: Bool
     @Binding var confirmRemove: Bool
+    @Binding var confirmSetupAll: Bool
 
     private var adaptCount: Int { store.forks.filter(\.needsAdapt).count }
     private var hasSync: Bool { store.forks.contains { selection.contains($0.id) && $0.hasAutoSync } }
@@ -185,9 +204,9 @@ struct ActionBar: View {
             Picker(tr("Modus", "Mode"), selection: $store.modeChoice) {
                 ForEach(SyncMode.allCases) { Text($0.title).tag($0) }
             }
-            .frame(width: 300)
+            .fixedSize()
             ScheduleButton()
-            Spacer()
+            Spacer(minLength: 8)
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
                     Label(tr("\(adaptCount) umstellen", "Switch \(adaptCount)"), systemImage: "wand.and.stars")
@@ -199,6 +218,11 @@ struct ActionBar: View {
                 .help(tr("Sofort synchronisieren (eigene Commits bleiben erhalten)", "Sync now (own commits are kept)"))
             Button(role: .destructive) { confirmRemove = true } label: { Image(systemName: "trash") }.help(tr("Auto-Sync entfernen", "Remove auto-sync"))
                 .disabled(!hasSync)
+            Button { confirmSetupAll = true } label: {
+                Label(tr("Alle einrichten (\(store.setupAllIDs.count))", "Set up all (\(store.setupAllIDs.count))"), systemImage: "bolt.badge.checkmark")
+            }
+            .disabled(store.setupAllIDs.isEmpty || !store.schedule.isValid)
+            .help(tr("Auto-Sync in allen Forks einrichten, die noch keinen haben", "Set up auto-sync in every fork that has none yet"))
             Button { Task { await store.install(selection, mode: store.modeChoice) } } label: {
                 Label(tr("Einrichten", "Set up"), systemImage: "bolt.fill")
             }
