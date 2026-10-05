@@ -91,6 +91,16 @@ final class Store: ObservableObject {
         func login(_ c: [String: Any], _ key: String) -> String {
             ((c[key] as? [String: Any])?["login"] as? String) ?? ""
         }
+        // Commits, die ForkSync selbst erzeugt (Workflow einrichten, Upstream-Merge), zaehlen wie Bot-Commits.
+        func isTool(_ c: [String: Any]) -> Bool {
+            let msg = ((c["commit"] as? [String: Any])?["message"] as? String) ?? ""
+            return msg.hasPrefix("Add upstream sync workflow (forksync")
+                || msg.hasPrefix("Remove upstream sync workflow (forksync")
+                || msg.hasPrefix("Merge remote-tracking branch 'upstream/")
+        }
+        let relevant = commits.filter { !isTool($0) }
+        if relevant.isEmpty { return .bot }
+        let commits = relevant
         if commits.contains(where: { login($0, "author").lowercased() == owner.lowercased()
                                      || login($0, "committer").lowercased() == owner.lowercased() }) { return .own }
         if commits.allSatisfy({ login($0, "author").hasSuffix("[bot]") }) { return .bot }

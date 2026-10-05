@@ -53,7 +53,7 @@ struct Fork: Identifiable, Hashable {
         switch (state, aheadKind) {
         case (.current, _): return "Aktuell"
         case (.behind, _): return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
-        case (.ahead, .bot): return ahead == 1 ? "1 Bot-Commit" : "\(ahead) Bot-Commits"
+        case (.ahead, .bot): return ahead == 1 ? "1 Bot-/Sync-Commit" : "\(ahead) Bot-/Sync-Commits"
         case (.ahead, .foreign): return ahead == 1 ? "1 Commit des Original-Autors" : "\(ahead) Commits des Original-Autors"
         case (.ahead, .own): return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
         case (.diverged, .own): return "Getrennt: \(ahead) eigene / \(behind) neue"
