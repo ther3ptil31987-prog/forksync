@@ -209,13 +209,32 @@ struct ErrorView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label("Keine Verbindung zu GitHub", systemImage: "person.crop.circle.badge.exclamationmark")
+            Label("Nicht bei GitHub angemeldet", systemImage: "person.crop.circle.badge.exclamationmark")
         } description: {
-            Text(message).textSelection(.enabled)
-            Text("Im Terminal anmelden: gh auth login  (danach: gh auth refresh -s workflow)")
-                .font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
+            if let dc = store.deviceCode {
+                Text("Gib diesen Code auf GitHub ein:")
+                Text(dc.userCode).font(.system(size: 34, weight: .bold, design: .monospaced)).textSelection(.enabled)
+                Text("Der Browser wurde geöffnet. Warte auf Bestätigung …").foregroundStyle(.secondary)
+            } else {
+                Text(message).textSelection(.enabled)
+                if let e = store.loginError { Text(e).foregroundStyle(.red) }
+                if Auth.clientID.isEmpty {
+                    Text("Anmelden per Terminal: gh auth login  (danach: gh auth refresh -s workflow)")
+                        .font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
+                }
+            }
         } actions: {
-            Button("Erneut versuchen") { Task { await store.refresh() } }
+            if store.deviceCode != nil {
+                Button("Abbrechen") { store.cancelLogin() }
+            } else {
+                if !Auth.clientID.isEmpty {
+                    Button("Mit GitHub anmelden") { store.login() }.buttonStyle(.borderedProminent)
+                }
+                Button("Erneut versuchen") { Task { await store.refresh() } }
+            }
+        }
+        .onChange(of: store.deviceCode?.userCode) { _, code in
+            if let uri = store.deviceCode?.uri, code != nil, let url = URL(string: uri) { NSWorkspace.shared.open(url) }
         }
     }
 }

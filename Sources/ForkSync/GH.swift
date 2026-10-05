@@ -6,7 +6,7 @@ struct GHError: LocalizedError {
     var firstLine: String { message.split(separator: "\n").first.map(String.init) ?? message }
 }
 
-/// Dünner Wrapper um die GitHub CLI. Authentifizierung läuft ausschließlich über `gh`.
+/// Zugriff auf GitHub: bevorzugt über den eigenen App-Login (Auth), sonst über die vorhandene `gh`-Anmeldung.
 enum GH {
     static let path: String? = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
         .first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -58,6 +58,9 @@ enum GH {
     @discardableResult
     static func api(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                     paginate: Bool = false) async throws -> Any? {
+        if let token = Auth.token {
+            return try await Auth.request(path, method: method, body: body, paginate: paginate, token: token)
+        }
         var args = ["api", path, "-X", method]
         if paginate { args += ["--paginate", "--slurp"] }
         var input: Data?
@@ -75,6 +78,10 @@ enum GH {
     }
 
     static func authStatus() async -> (ok: Bool, user: String?, hasWorkflowScope: Bool, detail: String) {
+        if let token = Auth.token {
+            let s = await Auth.status(token: token)
+            return (s.ok, s.user, s.scopes.contains("workflow"), s.detail)
+        }
         do {
             let data = try await run(["auth", "status"])
             let text = String(data: data, encoding: .utf8) ?? ""

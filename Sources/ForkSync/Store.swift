@@ -12,6 +12,37 @@ final class Store: ObservableObject {
     @Published var modeChoice: SyncMode = .auto
     @Published var schedule = Schedule.load() { didSet { schedule.save() } }
     var cron: String { schedule.cron }
+    @Published var deviceCode: Auth.DeviceCode?
+    @Published var loginError: String?
+    private var loginTask: Task<Void, Never>?
+
+    func login() {
+        loginError = nil
+        loginTask?.cancel()
+        loginTask = Task {
+            do {
+                let dc = try await Auth.start()
+                deviceCode = dc
+                try await Auth.finish(dc)
+                deviceCode = nil
+                await refresh()
+            } catch is CancellationError {
+                deviceCode = nil
+            } catch {
+                deviceCode = nil
+                loginError = (error as? GHError)?.message ?? error.localizedDescription
+            }
+        }
+    }
+
+    func cancelLogin() { loginTask?.cancel(); deviceCode = nil }
+
+    func logout() {
+        Auth.delete()
+        forks = []
+        user = nil
+        fatal = "Abgemeldet."
+    }
 
     func add(_ kind: LogLine.Kind, _ text: String) { log.append(LogLine(kind: kind, text: text)) }
 
