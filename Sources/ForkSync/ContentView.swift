@@ -25,6 +25,19 @@ struct ContentView: View {
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(.orange.opacity(0.1))
                 }
+                HStack {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: 520)
+                    Spacer()
+                    Text("\(visible.count) von \(store.forks.count) Forks")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                Divider()
                 list
                 Divider()
                 ActionBar(selection: selection, showLog: $showLog, confirmRemove: $confirmRemove)
@@ -32,13 +45,6 @@ struct ContentView: View {
         }
         .searchable(text: $search, prompt: "Forks durchsuchen")
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Filter", selection: $filter) {
-                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .frame(minWidth: 460)
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button { Task { await store.refresh() } } label: {
                     if store.loading { ProgressView().controlSize(.small) }
@@ -134,7 +140,7 @@ struct ActionBar: View {
             Picker("Modus", selection: $store.modeChoice) {
                 ForEach(SyncMode.allCases) { Text($0.title).tag($0) }
             }
-            .frame(width: 320)
+            .frame(width: 300)
             HStack(spacing: 4) {
                 Text("Cron (UTC)").foregroundStyle(.secondary)
                 TextField("", text: $store.cron).textFieldStyle(.roundedBorder)
@@ -143,16 +149,16 @@ struct ActionBar: View {
             Spacer()
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
-                    Label("\(adaptCount) auf „auto“ umstellen", systemImage: "wand.and.stars")
+                    Label("\(adaptCount) umstellen", systemImage: "wand.and.stars")
                 }.help("ff-Forks mit eigenen Commits auf Modus „auto“ umstellen (eigene Commits bleiben erhalten)")
             }
-            Button { showLog = true } label: { Label("Protokoll", systemImage: "list.bullet.rectangle") }
-            Button { Task { await store.runNow(selection) } } label: { Label("Jetzt syncen", systemImage: "play.fill") }
+            Button { showLog = true } label: { Image(systemName: "list.bullet.rectangle") }.help("Protokoll")
+            Button { Task { await store.runNow(selection) } } label: { Label("Syncen", systemImage: "play.fill") }
                 .disabled(!hasSync)
-            Button(role: .destructive) { confirmRemove = true } label: { Label("Entfernen", systemImage: "trash") }
+            Button(role: .destructive) { confirmRemove = true } label: { Image(systemName: "trash") }.help("Auto-Sync entfernen")
                 .disabled(!hasSync)
             Button { Task { await store.install(selection, mode: store.modeChoice) } } label: {
-                Label("Auto-Sync einrichten", systemImage: "bolt.fill")
+                Label("Einrichten", systemImage: "bolt.fill")
             }
             .buttonStyle(.borderedProminent)
             .disabled(selection.isEmpty)
