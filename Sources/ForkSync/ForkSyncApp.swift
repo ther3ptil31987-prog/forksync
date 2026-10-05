@@ -27,6 +27,11 @@ struct ForkSyncApp: App {
             CommandGroup(after: .newItem) {
                 Button("Aktualisieren") { Task { await store.refresh() } }
                     .keyboardShortcut("r")
+                Divider()
+                Button("Mit GitHub anmelden …") { store.fatal = "Anmeldung mit eigenem Konto"; store.login() }
+                    .disabled(Auth.clientID.isEmpty)
+                Button("Abmelden") { store.logout() }
+                    .disabled(Auth.token == nil)
             }
         }
     }
