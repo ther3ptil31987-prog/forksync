@@ -46,6 +46,16 @@ struct ContentView: View {
         .searchable(text: $search, prompt: "Forks durchsuchen")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                if store.ownLogin {
+                    Menu {
+                        Button("Abmelden", systemImage: "rectangle.portrait.and.arrow.right") { store.logout() }
+                    } label: { Label(store.user ?? "Konto", systemImage: "person.crop.circle") }
+                } else if !Auth.clientID.isEmpty {
+                    Button { store.startLogin() } label: { Label("Anmelden", systemImage: "person.crop.circle.badge.plus") }
+                        .help("Mit GitHub anmelden")
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button { Task { await store.refresh() } } label: {
                     if store.loading { ProgressView().controlSize(.small) }
                     else { Label("Aktualisieren", systemImage: "arrow.clockwise") }
@@ -214,6 +224,8 @@ struct ErrorView: View {
             if let dc = store.deviceCode {
                 Text("Gib diesen Code auf GitHub ein:")
                 Text(dc.userCode).font(.system(size: 34, weight: .bold, design: .monospaced)).textSelection(.enabled)
+                Label("Code in die Zwischenablage kopiert – im Browser einfach einfügen (⌘V).", systemImage: "doc.on.clipboard.fill")
+                    .foregroundStyle(.green)
                 Text("Der Browser wurde geöffnet. Warte auf Bestätigung …").foregroundStyle(.secondary)
             } else {
                 Text(message).textSelection(.enabled)

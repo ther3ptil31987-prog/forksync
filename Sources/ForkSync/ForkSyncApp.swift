@@ -28,10 +28,10 @@ struct ForkSyncApp: App {
                 Button("Aktualisieren") { Task { await store.refresh() } }
                     .keyboardShortcut("r")
                 Divider()
-                Button("Mit GitHub anmelden …") { store.fatal = "Anmeldung mit eigenem Konto"; store.login() }
+                Button("Mit GitHub anmelden …") { store.startLogin() }
                     .disabled(Auth.clientID.isEmpty)
                 Button("Abmelden") { store.logout() }
-                    .disabled(Auth.token == nil)
+                    .disabled(!store.ownLogin)
             }
         }
     }

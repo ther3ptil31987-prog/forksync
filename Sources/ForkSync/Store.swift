@@ -14,6 +14,7 @@ final class Store: ObservableObject {
     var cron: String { schedule.cron }
     @Published var deviceCode: Auth.DeviceCode?
     @Published var loginError: String?
+    @Published var ownLogin = Auth.token != nil
     private var loginTask: Task<Void, Never>?
 
     func login() {
@@ -23,8 +24,11 @@ final class Store: ObservableObject {
             do {
                 let dc = try await Auth.start()
                 deviceCode = dc
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(dc.userCode, forType: .string)
                 try await Auth.finish(dc)
                 deviceCode = nil
+                ownLogin = true
                 await refresh()
             } catch is CancellationError {
                 deviceCode = nil
@@ -35,10 +39,13 @@ final class Store: ObservableObject {
         }
     }
 
+    func startLogin() { fatal = "Anmeldung mit eigenem Konto"; login() }
+
     func cancelLogin() { loginTask?.cancel(); deviceCode = nil }
 
     func logout() {
         Auth.delete()
+        ownLogin = false
         forks = []
         user = nil
         fatal = "Abgemeldet."
