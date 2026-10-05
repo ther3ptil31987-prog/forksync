@@ -21,7 +21,8 @@ struct Fork: Identifiable, Hashable {
     var owner: String { String(full.split(separator: "/").first ?? "") }
     var parent: String?
     var parentBranch: String?
-    var ahead = 0     // eigene Commits im Fork
+    var ahead = 0     // Commits im Fork, die das Original nicht hat
+    var botOnly = false  // alle diese Commits stammen von Bots (z. B. github-actions[bot])
     var behind = 0    // neue Commits im Original
     var workflowSha: String?
     var workflowMode: SyncMode?
@@ -30,7 +31,7 @@ struct Fork: Identifiable, Hashable {
 
     var hasAutoSync: Bool { workflowSha != nil }
     var recommendedMode: SyncMode { .auto }
-    var needsAdapt: Bool { workflowMode == .ff && ahead > 0 }
+    var needsAdapt: Bool { workflowMode == .ff && ahead > 0 && !botOnly }
 
     enum State { case current, behind, ahead, diverged, error }
     var state: State {
@@ -48,6 +49,7 @@ struct Fork: Identifiable, Hashable {
         switch state {
         case .current: return "Aktuell"
         case .behind: return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
+        case .ahead where botOnly: return ahead == 1 ? "1 Bot-Commit" : "\(ahead) Bot-Commits"
         case .ahead: return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
         case .diverged: return "Getrennt: \(ahead) eigene / \(behind) neue"
         case .error: return "Fehler"
@@ -58,7 +60,7 @@ struct Fork: Identifiable, Hashable {
         switch state {
         case .current: .green
         case .behind: .blue
-        case .ahead: .purple
+        case .ahead: botOnly ? .teal : .purple
         case .diverged: .orange
         case .error: .red
         }
@@ -82,7 +84,7 @@ enum Filter: String, CaseIterable, Identifiable {
         switch self {
         case .all: true
         case .behind: f.behind > 0
-        case .own: f.ahead > 0
+        case .own: f.ahead > 0 && !f.botOnly
         case .auto: f.hasAutoSync
         case .off: !f.hasAutoSync && f.error == nil
         }

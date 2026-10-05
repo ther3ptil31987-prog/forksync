@@ -62,6 +62,13 @@ final class Store: ObservableObject {
             let cmp = try await GH.api("repos/\(pFull)/compare/\(pBranch)...\(owner):\(branch)") as? [String: Any]
             fork.ahead = cmp?["ahead_by"] as? Int ?? 0
             fork.behind = cmp?["behind_by"] as? Int ?? 0
+            if fork.ahead > 0, let commits = cmp?["commits"] as? [[String: Any]], !commits.isEmpty {
+                // Die Compare-API liefert bis zu 250 Commits; bei mehr gilt der Fork sicherheitshalber als „eigen“.
+                fork.botOnly = commits.count == fork.ahead && commits.allSatisfy {
+                    let author = (($0["author"] as? [String: Any])?["login"] as? String) ?? ""
+                    return author.hasSuffix("[bot]")
+                }
+            }
             if let f = try? await GH.api("repos/\(full)/contents/\(WorkflowTemplate.wfPath)?ref=\(branch)") as? [String: Any],
                let sha = f["sha"] as? String {
                 fork.workflowSha = sha
