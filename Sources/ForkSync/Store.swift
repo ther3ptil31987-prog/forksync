@@ -146,6 +146,7 @@ final class Store: ObservableObject {
                 notes.append("Settings › Actions › General: „Allow GitHub Actions to create and approve pull requests“ manuell aktivieren")
             }
         }
+        if !(await enableWorkflow(f)) { notes.append("Workflow konnte nicht aktiviert werden (Reiter „Actions“ des Forks)") }
         if runAfter, !(await dispatch(f)) { notes.append("Testlauf konnte nicht gestartet werden") }
         add(.ok, "\(f.name): eingerichtet (Modus \(mode.rawValue))")
         notes.forEach { add(.warn, "\(f.name): \($0)") }
@@ -157,13 +158,37 @@ final class Store: ObservableObject {
         await install(ids, mode: .auto, runAfter: false)
     }
 
-    func runNow(_ ids: Set<String>) async {
-        for f in forks where ids.contains(f.id) && f.hasAutoSync {
+    /// Sofort mit dem eigenen Login syncen (GitHubs merge-upstream); klappt auch, wenn das Original
+    /// Workflow-Dateien ändert, was der Actions-Token nicht darf. Eigene Commits bleiben erhalten.
+    func syncNow(_ ids: Set<String>) async {
+        for f in forks where ids.contains(f.id) && f.error == nil {
             busy.insert(f.id)
-            let ok = await dispatch(f)
-            add(ok ? .ok : .fail, "\(f.name): " + (ok ? "Sync gestartet" : "Start fehlgeschlagen"))
+            do {
+                let r = try await GH.api("repos/\(f.full)/merge-upstream", method: "POST", body: ["branch": f.branch]) as? [String: Any]
+                switch r?["merge_type"] as? String {
+                case "none": add(.ok, "\(f.name): schon aktuell")
+                case "fast-forward": add(.ok, "\(f.name): Fast-Forward durchgeführt")
+                default: add(.ok, "\(f.name): Original eingemergt, eigene Commits bleiben erhalten")
+                }
+            } catch {
+                let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
+                let conflict = msg.lowercased().contains("conflict") ? " → Konflikt, bitte auf GitHub manuell lösen" : ""
+                add(.fail, "\(f.name): \(msg)\(conflict)")
+            }
             busy.remove(f.id)
         }
+        await refresh()
+    }
+
+    /// Forks starten mit deaktivierten Workflows (disabled_fork) - einzeln aktivieren.
+    private func enableWorkflow(_ f: Fork) async -> Bool {
+        for _ in 0..<4 {
+            do {
+                try await GH.api("repos/\(f.full)/actions/workflows/\(WorkflowTemplate.wfName)/enable", method: "PUT")
+                return true
+            } catch { try? await Task.sleep(for: .seconds(3)) }
+        }
+        return false
     }
 
     func remove(_ ids: Set<String>) async {

@@ -9,7 +9,8 @@ Befehle:
     status   [repo ...]   Alle Forks mit Status anzeigen (eigene Commits? hinterher?)
     install  [repo ...]   Auto-Sync-Workflow in gewaehlten Forks einrichten
     adapt                 Forks mit Modus "ff", die eigene Commits haben, auf "pr" umstellen
-    run      [repo ...]   Sync sofort anstossen
+    run      [repo ...]   Sync-Workflow im Fork anstossen
+    sync     [repo ...]   Sofort mit dem eigenen Login syncen (auch bei geaenderten Workflow-Dateien)
     remove   [repo ...]   Workflow wieder entfernen
 
 Modi:
@@ -67,8 +68,14 @@ jobs:
           fi
 
           if git merge-base --is-ancestor HEAD "$UP"; then
-            git push origin "$UP:refs/heads/@@BRANCH@@"
-            echo "Fast-Forward durchgefuehrt"; exit 0
+            if git push origin "$UP:refs/heads/@@BRANCH@@"; then
+              echo "Fast-Forward durchgefuehrt"; exit 0
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null; then
+              echo "Fast-Forward durchgefuehrt (GitHub-Sync-API)"; exit 0
+            fi
+            echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+            exit 1
           fi
 
           if [ "@@MODE@@" = "ff" ]; then
@@ -84,10 +91,16 @@ jobs:
             fi
             git merge --abort 2>/dev/null || true
             git reset --hard "origin/@@BRANCH@@"
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+              echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
+            fi
             echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
           fi
 
-          git push --force origin "$UP:refs/heads/upstream-sync"
+          if ! git push --force origin "$UP:refs/heads/upstream-sync"; then
+            echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+            exit 1
+          fi
           if [ -z "$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --state open --json number -q '.[].number')" ]; then
             gh pr create --repo "$GITHUB_REPOSITORY" --base "@@BRANCH@@" --head upstream-sync \\
               --title "Sync with upstream" \\
@@ -283,6 +296,17 @@ def dispatch(full: str, branch: str) -> bool:
     return False
 
 
+def enable_workflow(full: str) -> bool:
+    """Forks starten mit deaktivierten Workflows (disabled_fork) - einzeln aktivieren."""
+    for _ in range(4):
+        try:
+            api(f"repos/{full}/actions/workflows/{WF_NAME}/enable", "PUT")
+            return True
+        except GhError:
+            time.sleep(3)
+    return False
+
+
 def do_install(i: dict, mode: str | None, cron: str, run: bool) -> None:
     if "error" in i:
         print(f"- {i['name']}: uebersprungen ({i['error']})")
@@ -313,6 +337,8 @@ def do_install(i: dict, mode: str | None, cron: str, run: bool) -> None:
         except GhError:
             notes.append("Settings > Actions > General: 'Allow GitHub Actions to create "
                          "and approve pull requests' manuell aktivieren")
+    if not enable_workflow(i["full"]):
+        notes.append("Workflow konnte nicht aktiviert werden (Reiter 'Actions' des Forks)")
     if run and not dispatch(i["full"], i["branch"]):
         notes.append("Testlauf konnte nicht gestartet werden (spaeter `run` nutzen)")
 
@@ -357,6 +383,21 @@ def cmd_run(args, infos):
         print(f"- {i['name']}: {'gestartet' if ok else 'FEHLER beim Starten'}")
 
 
+def cmd_sync(args, infos):
+    """Sofort mit dem eigenen Login syncen (GitHubs merge-upstream, klappt auch bei Workflow-Aenderungen)."""
+    for i in pick(infos, args.repos):
+        if "error" in i:
+            print(f"- {i['name']}: uebersprungen ({i['error']})")
+            continue
+        try:
+            r = api(f"repos/{i['full']}/merge-upstream", "POST", {"branch": i["branch"]}) or {}
+            t = r.get("merge_type")
+            print(f"- {i['name']}: " + {"none": "schon aktuell", "fast-forward": "Fast-Forward durchgefuehrt"}.get(
+                t, "Original eingemergt, eigene Commits bleiben erhalten"))
+        except GhError as e:
+            print(f"- {i['name']}: FEHLER: {str(e).splitlines()[0]}")
+
+
 def cmd_remove(args, infos):
     chosen = pick(infos, args.repos, [x for x in infos if x["wf"]])
     confirm(f"Workflow in {len(chosen)} Fork(s) entfernen?", args.yes)
@@ -378,12 +419,13 @@ def main() -> None:
         ("status", cmd_status, "Forks und Status anzeigen"),
         ("install", cmd_install, "Auto-Sync einrichten"),
         ("adapt", cmd_adapt, "ff-Forks mit eigenen Commits auf pr umstellen"),
-        ("run", cmd_run, "Sync sofort starten"),
+        ("run", cmd_run, "Sync-Workflow im Fork starten"),
+        ("sync", cmd_sync, "Sofort mit eigenem Login syncen (ohne Workflow)"),
         ("remove", cmd_remove, "Auto-Sync entfernen"),
     ]:
         p = sub.add_parser(name, help=helptext)
         p.set_defaults(fn=fn)
-        if name in ("install", "run", "remove"):
+        if name in ("install", "run", "remove", "sync"):
             p.add_argument("repos", nargs="*", help="Repo-Name(n); ohne Angabe: interaktive Auswahl")
         if name in ("install", "adapt"):
             p.add_argument("--cron", default="17 5 * * *", help="Zeitplan (UTC), Standard: taeglich 05:17")

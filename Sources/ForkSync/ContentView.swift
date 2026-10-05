@@ -149,8 +149,9 @@ struct ActionBar: View {
                 }.help("ff-Forks mit eigenen Commits auf Modus „auto“ umstellen (eigene Commits bleiben erhalten)")
             }
             Button { showLog = true } label: { Image(systemName: "list.bullet.rectangle") }.help("Protokoll")
-            Button { Task { await store.runNow(selection) } } label: { Label("Syncen", systemImage: "play.fill") }
-                .disabled(!hasSync)
+            Button { Task { await store.syncNow(selection) } } label: { Label("Syncen", systemImage: "play.fill") }
+                .disabled(selection.isEmpty)
+                .help("Sofort synchronisieren (eigene Commits bleiben erhalten)")
             Button(role: .destructive) { confirmRemove = true } label: { Image(systemName: "trash") }.help("Auto-Sync entfernen")
                 .disabled(!hasSync)
             Button { Task { await store.install(selection, mode: store.modeChoice) } } label: {

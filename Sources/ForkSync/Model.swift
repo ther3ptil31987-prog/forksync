@@ -152,8 +152,14 @@ jobs:
           fi
 
           if git merge-base --is-ancestor HEAD "$UP"; then
-            git push origin "$UP:refs/heads/@@BRANCH@@"
-            echo "Fast-Forward durchgefuehrt"; exit 0
+            if git push origin "$UP:refs/heads/@@BRANCH@@"; then
+              echo "Fast-Forward durchgefuehrt"; exit 0
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null; then
+              echo "Fast-Forward durchgefuehrt (GitHub-Sync-API)"; exit 0
+            fi
+            echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+            exit 1
           fi
 
           if [ "@@MODE@@" = "ff" ]; then
@@ -169,10 +175,16 @@ jobs:
             fi
             git merge --abort 2>/dev/null || true
             git reset --hard "origin/@@BRANCH@@"
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+              echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
+            fi
             echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
           fi
 
-          git push --force origin "$UP:refs/heads/upstream-sync"
+          if ! git push --force origin "$UP:refs/heads/upstream-sync"; then
+            echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
+            exit 1
+          fi
           if [ -z "$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --state open --json number -q '.[].number')" ]; then
             gh pr create --repo "$GITHUB_REPOSITORY" --base "@@BRANCH@@" --head upstream-sync \
               --title "Sync with upstream" \
