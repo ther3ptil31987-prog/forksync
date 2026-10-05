@@ -58,16 +58,15 @@ final class Store: ObservableObject {
                 return fork
             }
             fork.parent = pFull
-            fork.parentBranch = pBranch
-            let cmp = try await GH.api("repos/\(pFull)/compare/\(pBranch)...\(owner):\(branch)") as? [String: Any]
+            // Gleichnamigen Branch des Originals vergleichen (Fork-main <-> Original-main), sonst dessen Standard-Branch.
+            let enc = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+            let cmpBranch = (try? await GH.api("repos/\(pFull)/branches/\(enc)")) != nil ? branch : pBranch
+            fork.parentBranch = cmpBranch
+            let cmp = try await GH.api("repos/\(pFull)/compare/\(cmpBranch)...\(owner):\(branch)") as? [String: Any]
             fork.ahead = cmp?["ahead_by"] as? Int ?? 0
             fork.behind = cmp?["behind_by"] as? Int ?? 0
-            if fork.ahead > 0, let commits = cmp?["commits"] as? [[String: Any]], !commits.isEmpty {
-                // Die Compare-API liefert bis zu 250 Commits; bei mehr gilt der Fork sicherheitshalber als „eigen“.
-                fork.botOnly = commits.count == fork.ahead && commits.allSatisfy {
-                    let author = (($0["author"] as? [String: Any])?["login"] as? String) ?? ""
-                    return author.hasSuffix("[bot]")
-                }
+            if fork.ahead > 0 {
+                fork.aheadKind = classify(cmp?["commits"] as? [[String: Any]] ?? [], ahead: fork.ahead, owner: owner)
             }
             if let f = try? await GH.api("repos/\(full)/contents/\(WorkflowTemplate.wfPath)?ref=\(branch)") as? [String: Any],
                let sha = f["sha"] as? String {
@@ -75,7 +74,7 @@ final class Store: ObservableObject {
                 let b64 = (f["content"] as? String) ?? ""
                 if let d = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
                    let text = String(data: d, encoding: .utf8),
-                   let r = text.range(of: #"# mode: (ff|pr)"#, options: .regularExpression) {
+                   let r = text.range(of: #"# mode: (auto|ff|pr)"#, options: .regularExpression) {
                     fork.workflowMode = SyncMode(rawValue: String(text[r].dropFirst(8)))
                 }
             }
@@ -83,6 +82,20 @@ final class Store: ObservableObject {
             fork.error = (error as? GHError)?.firstLine ?? error.localizedDescription
         }
         return fork
+    }
+
+    /// Die Compare-API liefert max. 250 Commits; fehlen welche, gilt der Fork vorsichtshalber als „eigen“.
+    nonisolated static func classify(_ commits: [[String: Any]], ahead: Int, owner: String) -> Fork.AheadKind {
+        guard !commits.isEmpty, commits.count == ahead else { return .own }
+        func login(_ c: [String: Any], _ key: String) -> String {
+            ((c[key] as? [String: Any])?["login"] as? String) ?? ""
+        }
+        if commits.contains(where: { login($0, "author").lowercased() == owner.lowercased()
+                                     || login($0, "committer").lowercased() == owner.lowercased() }) { return .own }
+        if commits.allSatisfy({ login($0, "author").hasSuffix("[bot]") }) { return .bot }
+        // Commit ohne zuordenbaren GitHub-Account (author == nil) kann von dir sein -> eigen.
+        if commits.contains(where: { login($0, "author").isEmpty }) { return .own }
+        return .foreign
     }
 
     // MARK: Aktionen

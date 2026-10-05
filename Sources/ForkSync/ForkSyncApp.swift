@@ -13,6 +13,9 @@ struct ForkSyncApp: App {
                     await store.refresh()
                     if let path = ProcessInfo.processInfo.environment["FORKSYNC_SNAPSHOT"] {
                         try? await Task.sleep(for: .seconds(2))
+                        for f in store.forks where f.ahead > 0 || f.parentBranch != f.branch {
+                            print("\(f.name): \(f.statusText) [fork:\(f.branch) <-> original:\(f.parentBranch ?? "?")]")
+                        }
                         print("forks=\(store.forks.count) fatal=\(store.fatal ?? "-")")
                         Snapshot.write(to: path)
                         NSApp.terminate(nil)

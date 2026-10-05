@@ -22,7 +22,11 @@ struct Fork: Identifiable, Hashable {
     var parent: String?
     var parentBranch: String?
     var ahead = 0     // Commits im Fork, die das Original nicht hat
-    var botOnly = false  // alle diese Commits stammen von Bots (z. B. github-actions[bot])
+    /// Herkunft der Fork-Commits: Bots (github-actions[bot]), fremde Autoren (z. B. Original-Entwickler,
+    /// dessen Historie umgeschrieben wurde) oder tatsaechlich eigene Commits.
+    enum AheadKind { case bot, foreign, own }
+    var aheadKind: AheadKind = .own
+    var ownCommits: Bool { ahead > 0 && aheadKind == .own }
     var behind = 0    // neue Commits im Original
     var workflowSha: String?
     var workflowMode: SyncMode?
@@ -31,7 +35,7 @@ struct Fork: Identifiable, Hashable {
 
     var hasAutoSync: Bool { workflowSha != nil }
     var recommendedMode: SyncMode { .auto }
-    var needsAdapt: Bool { workflowMode == .ff && ahead > 0 && !botOnly }
+    var needsAdapt: Bool { workflowMode == .ff && ownCommits }
 
     enum State { case current, behind, ahead, diverged, error }
     var state: State {
@@ -46,13 +50,15 @@ struct Fork: Identifiable, Hashable {
 
     var statusText: String {
         if let error { return error }
-        switch state {
-        case .current: return "Aktuell"
-        case .behind: return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
-        case .ahead where botOnly: return ahead == 1 ? "1 Bot-Commit" : "\(ahead) Bot-Commits"
-        case .ahead: return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
-        case .diverged: return "Getrennt: \(ahead) eigene / \(behind) neue"
-        case .error: return "Fehler"
+        switch (state, aheadKind) {
+        case (.current, _): return "Aktuell"
+        case (.behind, _): return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
+        case (.ahead, .bot): return ahead == 1 ? "1 Bot-Commit" : "\(ahead) Bot-Commits"
+        case (.ahead, .foreign): return ahead == 1 ? "1 Commit des Original-Autors" : "\(ahead) Commits des Original-Autors"
+        case (.ahead, .own): return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
+        case (.diverged, .own): return "Getrennt: \(ahead) eigene / \(behind) neue"
+        case (.diverged, _): return "Historie umgeschrieben: \(ahead) alt / \(behind) neu"
+        case (.error, _): return "Fehler"
         }
     }
 
@@ -60,8 +66,8 @@ struct Fork: Identifiable, Hashable {
         switch state {
         case .current: .green
         case .behind: .blue
-        case .ahead: botOnly ? .teal : .purple
-        case .diverged: .orange
+        case .ahead: aheadKind == .own ? .purple : .teal
+        case .diverged: aheadKind == .own ? .orange : .teal
         case .error: .red
         }
     }
@@ -84,7 +90,7 @@ enum Filter: String, CaseIterable, Identifiable {
         switch self {
         case .all: true
         case .behind: f.behind > 0
-        case .own: f.ahead > 0 && !f.botOnly
+        case .own: f.ownCommits
         case .auto: f.hasAutoSync
         case .off: !f.hasAutoSync && f.error == nil
         }
