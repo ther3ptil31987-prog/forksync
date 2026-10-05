@@ -130,6 +130,7 @@ struct ContentView: View {
                 List(visible, selection: $selection) { fork in
                     ForkRow(fork: fork, busy: store.busy.contains(fork.id)) { Task { await store.syncNow([fork.id]) } }
                         .tag(fork.id)
+                        .simultaneousGesture(TapGesture(count: 2).onEnded { NSWorkspace.shared.open(fork.url) })
                         .contextMenu {
                             Button(tr("Auf GitHub öffnen", "Open on GitHub")) { NSWorkspace.shared.open(fork.url) }
                             if let p = fork.parent, let u = URL(string: "https://github.com/\(p)") {

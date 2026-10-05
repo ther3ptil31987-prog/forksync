@@ -57,6 +57,9 @@ struct RepoView: View {
             } else {
                 List(visible) { repo in
                     RepoRow(repo: repo) { pending = repo }
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            if let u = URL(string: "https://github.com/\(repo.full)") { NSWorkspace.shared.open(u) }
+                        })
                 }
                 .listStyle(.inset)
             }
