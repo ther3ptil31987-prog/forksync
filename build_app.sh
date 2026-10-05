@@ -1,5 +1,9 @@
 #!/bin/bash
-# Baut ForkSync.app (Release) und legt sie in ./build ab. Optional: ./build_app.sh --install
+# Baut ForkSync.app und legt sie in ./build ab.
+#   ./build_app.sh --install   -> zusätzlich nach /Applications
+#   ./build_app.sh --release   -> notarisiert + staplet und baut build/ForkSync.dmg
+# Signatur: "Developer ID Application" (falls im Schlüsselbund), sonst ad-hoc.
+# Notarisierung: Zugangsdaten aus ~/.config/forksync/notary.env (NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER).
 set -euo pipefail
 cd "$(dirname "$0")"
 APP="build/ForkSync.app"
@@ -34,8 +38,30 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-codesign --force --sign - "$APP" >/dev/null
+IDENTITY="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+if [[ -n "$IDENTITY" ]]; then
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP" >/dev/null
+  echo "Signiert: $IDENTITY"
+else
+  codesign --force --sign - "$APP" >/dev/null
+  echo "Signiert: ad-hoc (kein Developer-ID-Zertifikat gefunden)"
+fi
 echo "Gebaut: $APP"
 if [[ "${1:-}" == "--install" ]]; then
   rm -rf /Applications/ForkSync.app && cp -R "$APP" /Applications/ && echo "Installiert: /Applications/ForkSync.app"
+fi
+if [[ "${1:-}" == "--release" ]]; then
+  [[ -n "$IDENTITY" ]] || { echo "Kein Developer-ID-Zertifikat gefunden"; exit 1; }
+  # shellcheck disable=SC1090
+  source ~/.config/forksync/notary.env
+  [[ -n "${NOTARY_ISSUER:-}" ]] || { echo "NOTARY_ISSUER fehlt in ~/.config/forksync/notary.env"; exit 1; }
+  ditto -c -k --keepParent "$APP" build/ForkSync.zip
+  xcrun notarytool submit build/ForkSync.zip --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
+  xcrun stapler staple "$APP"
+  rm -f build/ForkSync.zip build/ForkSync.dmg
+  hdiutil create -volname ForkSync -srcfolder "$APP" -ov -format UDZO build/ForkSync.dmg >/dev/null
+  codesign --force --timestamp --sign "$IDENTITY" build/ForkSync.dmg >/dev/null
+  xcrun stapler staple build/ForkSync.dmg
+  spctl -a -t exec -vv "$APP" || true
+  echo "Release: build/ForkSync.dmg"
 fi
