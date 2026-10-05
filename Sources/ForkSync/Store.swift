@@ -10,7 +10,8 @@ final class Store: ObservableObject {
     @Published var fatal: String?
     @Published var missingWorkflowScope = false
     @Published var modeChoice: SyncMode = .auto
-    @Published var cron = "17 5 * * *"
+    @Published var schedule = Schedule.load() { didSet { schedule.save() } }
+    var cron: String { schedule.cron }
 
     func add(_ kind: LogLine.Kind, _ text: String) { log.append(LogLine(kind: kind, text: text)) }
 

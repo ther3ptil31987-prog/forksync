@@ -141,11 +141,7 @@ struct ActionBar: View {
                 ForEach(SyncMode.allCases) { Text($0.title).tag($0) }
             }
             .frame(width: 300)
-            HStack(spacing: 4) {
-                Text("Cron (UTC)").foregroundStyle(.secondary)
-                TextField("", text: $store.cron).textFieldStyle(.roundedBorder)
-                    .frame(width: 110).font(.system(.body, design: .monospaced))
-            }
+            ScheduleButton()
             Spacer()
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
@@ -161,7 +157,7 @@ struct ActionBar: View {
                 Label("Einrichten", systemImage: "bolt.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(selection.isEmpty)
+            .disabled(selection.isEmpty || !store.schedule.isValid)
         }
         .padding(12)
         .background(.bar)
