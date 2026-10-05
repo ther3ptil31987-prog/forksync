@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct ForkSyncApp: App {
     @StateObject private var store = Store()
+    @AppStorage(Lang.key) private var lang = Lang.system.rawValue
 
     var body: some Scene {
         WindowGroup("ForkSync") {
@@ -25,12 +26,12 @@ struct ForkSyncApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Aktualisieren") { Task { await store.refresh() } }
+                Button(tr("Aktualisieren", "Refresh")) { Task { await store.refresh() } }
                     .keyboardShortcut("r")
                 Divider()
-                Button("Mit GitHub anmelden …") { store.startLogin() }
+                Button(tr("Mit GitHub anmelden …", "Sign in with GitHub …")) { store.startLogin() }
                     .disabled(Auth.clientID.isEmpty)
-                Button("Abmelden") { store.logout() }
+                Button(tr("Abmelden", "Sign out")) { store.logout() }
                     .disabled(!store.ownLogin)
             }
         }

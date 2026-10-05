@@ -5,9 +5,9 @@ enum SyncMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .auto: "Automatisch (Spiegel / Merge)"
-        case .ff: "Nur Spiegeln (Fast-Forward)"
-        case .pr: "Immer Pull Request"
+        case .auto: tr("Automatisch (Spiegel / Merge)", "Automatic (mirror / merge)")
+        case .ff: tr("Nur Spiegeln (Fast-Forward)", "Mirror only (fast-forward)")
+        case .pr: tr("Immer Pull Request", "Always pull request")
         }
     }
     var short: String { rawValue }
@@ -51,14 +51,18 @@ struct Fork: Identifiable, Hashable {
     var statusText: String {
         if let error { return error }
         switch (state, aheadKind) {
-        case (.current, _): return "Aktuell"
-        case (.behind, _): return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
-        case (.ahead, .bot): return ahead == 1 ? "1 Bot-/Sync-Commit" : "\(ahead) Bot-/Sync-Commits"
-        case (.ahead, .foreign): return ahead == 1 ? "1 Commit des Original-Autors" : "\(ahead) Commits des Original-Autors"
-        case (.ahead, .own): return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
-        case (.diverged, .own): return "Getrennt: \(ahead) eigene / \(behind) neue"
-        case (.diverged, _): return "Historie umgeschrieben: \(ahead) alt / \(behind) neu"
-        case (.error, _): return "Fehler"
+        case (.current, _): return tr("Aktuell", "Up to date")
+        case (.behind, _): return tr(behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original",
+                                    behind == 1 ? "1 new commit upstream" : "\(behind) new commits upstream")
+        case (.ahead, .bot): return tr(ahead == 1 ? "1 Bot-/Sync-Commit" : "\(ahead) Bot-/Sync-Commits",
+                                      ahead == 1 ? "1 bot/sync commit" : "\(ahead) bot/sync commits")
+        case (.ahead, .foreign): return tr(ahead == 1 ? "1 Commit des Original-Autors" : "\(ahead) Commits des Original-Autors",
+                                          ahead == 1 ? "1 commit by the original author" : "\(ahead) commits by the original author")
+        case (.ahead, .own): return tr(ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits",
+                                      ahead == 1 ? "1 own commit" : "\(ahead) own commits")
+        case (.diverged, .own): return tr("Getrennt: \(ahead) eigene / \(behind) neue", "Diverged: \(ahead) own / \(behind) new")
+        case (.diverged, _): return tr("Historie umgeschrieben: \(ahead) alt / \(behind) neu", "History rewritten: \(ahead) old / \(behind) new")
+        case (.error, _): return tr("Fehler", "Error")
         }
     }
 
@@ -84,8 +88,17 @@ struct Fork: Identifiable, Hashable {
 }
 
 enum Filter: String, CaseIterable, Identifiable {
-    case all = "Alle", behind = "Hinterher", own = "Eigene Commits", auto = "Auto-Sync", off = "Ohne Auto-Sync"
+    case all, behind, own, auto, off
     var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: tr("Alle", "All")
+        case .behind: tr("Hinterher", "Behind")
+        case .own: tr("Eigene Commits", "Own commits")
+        case .auto: "Auto-Sync"
+        case .off: tr("Ohne Auto-Sync", "No auto-sync")
+        }
+    }
     func matches(_ f: Fork) -> Bool {
         switch self {
         case .all: true
@@ -97,12 +110,42 @@ enum Filter: String, CaseIterable, Identifiable {
     }
 }
 
-struct LogLine: Identifiable {
-    enum Kind { case info, ok, warn, fail }
-    let id = UUID()
+struct RepoItem: Identifiable, Hashable {
+    var id: String { full }
+    let full: String
+    let name: String
+    let isPrivate: Bool
+    let isFork: Bool
+    let archived: Bool
+    let stars: Int
+    let forks: Int
+}
+
+struct LogLine: Identifiable, Codable {
+    enum Kind: String, Codable { case info, ok, warn, fail }
+    var id = UUID()
     let kind: Kind
     let text: String
-    let date = Date()
+    var date = Date()
+}
+
+/// Protokoll dauerhaft in ~/Library/Application Support/ForkSync/log.json (die letzten 500 Einträge).
+enum LogStore {
+    private static var url: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ForkSync", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("log.json")
+    }
+
+    static func load() -> [LogLine] {
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([LogLine].self, from: data)) ?? []
+    }
+
+    static func save(_ lines: [LogLine]) {
+        if let data = try? JSONEncoder().encode(Array(lines.suffix(500))) { try? data.write(to: url, options: .atomic) }
+    }
 }
 
 enum WorkflowTemplate {

@@ -64,11 +64,11 @@ enum Auth {
     }
 
     static func start() async throws -> DeviceCode {
-        guard !clientID.isEmpty else { throw GHError(message: "Keine OAuth-Client-ID hinterlegt.") }
+        guard !clientID.isEmpty else { throw GHError(message: tr("Keine OAuth-Client-ID hinterlegt.", "No OAuth client ID configured.")) }
         let r = try await post("https://github.com/login/device/code", ["client_id": clientID, "scope": scopes])
         guard let dc = r["device_code"] as? String, let uc = r["user_code"] as? String,
               let uri = r["verification_uri"] as? String else {
-            throw GHError(message: (r["error_description"] as? String) ?? "Anmeldung konnte nicht gestartet werden.")
+            throw GHError(message: (r["error_description"] as? String) ?? tr("Anmeldung konnte nicht gestartet werden.", "Sign-in could not be started."))
         }
         return DeviceCode(deviceCode: dc, userCode: uc, uri: uri,
                           interval: r["interval"] as? Int ?? 5, expires: r["expires_in"] as? Int ?? 900)
@@ -88,12 +88,12 @@ enum Auth {
             switch r["error"] as? String {
             case "authorization_pending": continue
             case "slow_down": interval += 5
-            case "access_denied": throw GHError(message: "Anmeldung abgelehnt.")
-            case "expired_token": throw GHError(message: "Code abgelaufen, bitte erneut versuchen.")
-            default: throw GHError(message: (r["error_description"] as? String) ?? "Anmeldung fehlgeschlagen.")
+            case "access_denied": throw GHError(message: tr("Anmeldung abgelehnt.", "Sign-in was denied."))
+            case "expired_token": throw GHError(message: tr("Code abgelaufen, bitte erneut versuchen.", "Code expired, please try again."))
+            default: throw GHError(message: (r["error_description"] as? String) ?? tr("Anmeldung fehlgeschlagen.", "Sign-in failed."))
             }
         }
-        throw GHError(message: "Code abgelaufen, bitte erneut versuchen.")
+        throw GHError(message: tr("Code abgelaufen, bitte erneut versuchen.", "Code expired, please try again."))
     }
 
     // MARK: REST
@@ -143,9 +143,9 @@ enum Auth {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("ForkSync", forHTTPHeaderField: "User-Agent")
         guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse else {
-            return (false, nil, "", "Keine Verbindung zu GitHub.")
+            return (false, nil, "", tr("Keine Verbindung zu GitHub.", "No connection to GitHub."))
         }
-        if http.statusCode == 401 { delete(); return (false, nil, "", "Anmeldung abgelaufen, bitte neu anmelden.") }
+        if http.statusCode == 401 { delete(); return (false, nil, "", tr("Anmeldung abgelaufen, bitte neu anmelden.", "Session expired, please sign in again.")) }
         let login = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["login"] as? String
         return (http.statusCode < 400, login, http.value(forHTTPHeaderField: "X-OAuth-Scopes") ?? "", "HTTP \(http.statusCode)")
     }

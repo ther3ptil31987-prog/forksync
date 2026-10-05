@@ -7,11 +7,11 @@ struct Schedule: Codable, Equatable {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .hourly: "Stündlich"
-            case .every6h: "Alle 6 Stunden"
-            case .daily: "Täglich"
-            case .weekly: "Wöchentlich"
-            case .custom: "Eigener Cron-Ausdruck"
+            case .hourly: tr("Stündlich", "Hourly")
+            case .every6h: tr("Alle 6 Stunden", "Every 6 hours")
+            case .daily: tr("Täglich", "Daily")
+            case .weekly: tr("Wöchentlich", "Weekly")
+            case .custom: tr("Eigener Cron-Ausdruck", "Custom cron expression")
             }
         }
     }
@@ -22,7 +22,10 @@ struct Schedule: Codable, Equatable {
     var weekday = 1           // Cron: 0 = Sonntag ... 6 = Samstag; Standard Montag
     var customCron = "17 5 * * *"
 
-    static let weekdays = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
+    static var weekdays: [String] {
+        tr("Sonntag,Montag,Dienstag,Mittwoch,Donnerstag,Freitag,Samstag",
+           "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday").components(separatedBy: ",")
+    }
 
     /// Cron-Ausdruck in UTC.
     var cron: String {
@@ -49,10 +52,10 @@ struct Schedule: Codable, Equatable {
     var summary: String {
         let time = String(format: "%02d:%02d", hour, minute)
         switch frequency {
-        case .hourly: return "Stündlich, zur Minute \(minute)"
-        case .every6h: return "Alle 6 Stunden, zur Minute \(minute)"
-        case .daily: return "Täglich um \(time)"
-        case .weekly: return "\(Schedule.weekdays[weekday]) um \(time)"
+        case .hourly: return tr("Stündlich, zur Minute \(minute)", "Hourly, at minute \(minute)")
+        case .every6h: return tr("Alle 6 Stunden, zur Minute \(minute)", "Every 6 hours, at minute \(minute)")
+        case .daily: return tr("Täglich um \(time)", "Daily at \(time)")
+        case .weekly: return tr("\(Schedule.weekdays[weekday]) um \(time)", "\(Schedule.weekdays[weekday]) at \(time)")
         case .custom: return "Cron: \(customCron)"
         }
     }
@@ -76,7 +79,7 @@ struct ScheduleButton: View {
         Button { open.toggle() } label: {
             Label(store.schedule.summary, systemImage: "clock")
         }
-        .help("Zeitplan für den Auto-Sync")
+        .help(tr("Zeitplan für den Auto-Sync", "Schedule for auto-sync"))
         .popover(isPresented: $open, arrowEdge: .top) { SchedulePopover().environmentObject(store) }
     }
 }
@@ -96,26 +99,26 @@ private struct SchedulePopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Zeitplan").font(.headline)
-            Picker("Häufigkeit", selection: $store.schedule.frequency) {
+            Text(tr("Zeitplan", "Schedule")).font(.headline)
+            Picker(tr("Häufigkeit", "Frequency"), selection: $store.schedule.frequency) {
                 ForEach(Schedule.Frequency.allCases) { Text($0.title).tag($0) }
             }
             switch store.schedule.frequency {
             case .hourly, .every6h:
-                Stepper("Zur Minute: \(store.schedule.minute)", value: $store.schedule.minute, in: 0...59)
+                Stepper(tr("Zur Minute: \(store.schedule.minute)", "At minute: \(store.schedule.minute)"), value: $store.schedule.minute, in: 0...59)
             case .daily:
-                DatePicker("Uhrzeit", selection: timeBinding, displayedComponents: .hourAndMinute)
+                DatePicker(tr("Uhrzeit", "Time"), selection: timeBinding, displayedComponents: .hourAndMinute)
             case .weekly:
-                Picker("Wochentag", selection: $store.schedule.weekday) {
+                Picker(tr("Wochentag", "Weekday"), selection: $store.schedule.weekday) {
                     ForEach(0..<7, id: \.self) { Text(Schedule.weekdays[$0]).tag($0) }
                 }
-                DatePicker("Uhrzeit", selection: timeBinding, displayedComponents: .hourAndMinute)
+                DatePicker(tr("Uhrzeit", "Time"), selection: timeBinding, displayedComponents: .hourAndMinute)
             case .custom:
                 TextField("Cron (UTC)", text: $store.schedule.customCron)
                     .font(.system(.body, design: .monospaced))
                     .textFieldStyle(.roundedBorder)
                 if !store.schedule.isValid {
-                    Label("Erwartet 5 Felder, z. B. 17 5 * * *", systemImage: "exclamationmark.triangle.fill")
+                    Label(tr("Erwartet 5 Felder, z. B. 17 5 * * *", "Expects 5 fields, e.g. 17 5 * * *"), systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
@@ -123,7 +126,8 @@ private struct SchedulePopover: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Cron (UTC): \(store.schedule.cron)")
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
-                Text("Gilt für neu eingerichtete Forks. GitHub startet geplante Läufe oft einige Minuten später; Sommer-/Winterzeit verschiebt die Ortszeit um eine Stunde.")
+                Text(tr("Gilt für neu eingerichtete Forks. GitHub startet geplante Läufe oft einige Minuten später; Sommer-/Winterzeit verschiebt die Ortszeit um eine Stunde.",
+                        "Applies to newly set-up forks. GitHub often starts scheduled runs a few minutes late; daylight saving time shifts local time by one hour."))
                     .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
         }

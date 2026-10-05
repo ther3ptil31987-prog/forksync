@@ -13,7 +13,7 @@ enum GH {
 
     static func run(_ args: [String], stdin: Data? = nil) async throws -> Data {
         guard let path else {
-            throw GHError(message: "GitHub CLI (gh) nicht gefunden. Installation: brew install gh")
+            throw GHError(message: tr("GitHub CLI (gh) nicht gefunden. Installation: brew install gh", "GitHub CLI (gh) not found. Install with: brew install gh"))
         }
         return try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {

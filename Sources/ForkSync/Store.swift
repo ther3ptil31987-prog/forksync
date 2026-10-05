@@ -5,13 +5,15 @@ final class Store: ObservableObject {
     @Published var forks: [Fork] = []
     @Published var loading = false
     @Published var busy: Set<String> = []
-    @Published var log: [LogLine] = []
+    @Published var log: [LogLine] = LogStore.load() { didSet { LogStore.save(log) } }
     @Published var user: String?
     @Published var fatal: String?
     @Published var missingWorkflowScope = false
     @Published var modeChoice: SyncMode = .auto
     @Published var schedule = Schedule.load() { didSet { schedule.save() } }
     var cron: String { schedule.cron }
+    @Published var repos: [RepoItem] = []
+    @Published var reposLoading = false
     @Published var deviceCode: Auth.DeviceCode?
     @Published var loginError: String?
     @Published var ownLogin = Auth.token != nil
@@ -39,7 +41,7 @@ final class Store: ObservableObject {
         }
     }
 
-    func startLogin() { fatal = "Anmeldung mit eigenem Konto"; login() }
+    func startLogin() { fatal = tr("Anmeldung mit eigenem Konto", "Signing in with your own account"); login() }
 
     func cancelLogin() { loginTask?.cancel(); deviceCode = nil }
 
@@ -48,10 +50,40 @@ final class Store: ObservableObject {
         ownLogin = false
         forks = []
         user = nil
-        fatal = "Abgemeldet."
+        fatal = tr("Abgemeldet.", "Signed out.")
     }
 
     func add(_ kind: LogLine.Kind, _ text: String) { log.append(LogLine(kind: kind, text: text)) }
+
+    // MARK: Repos (Sichtbarkeit)
+
+    func loadRepos() async {
+        guard !reposLoading else { return }
+        reposLoading = true
+        defer { reposLoading = false }
+        do {
+            let list = (try await GH.api("user/repos?affiliation=owner&per_page=100", paginate: true) as? [[String: Any]]) ?? []
+            repos = list.map { r in
+                RepoItem(full: r["full_name"] as? String ?? "?", name: r["name"] as? String ?? "?",
+                         isPrivate: r["private"] as? Bool ?? false, isFork: r["fork"] as? Bool ?? false,
+                         archived: r["archived"] as? Bool ?? false,
+                         stars: r["stargazers_count"] as? Int ?? 0, forks: r["forks_count"] as? Int ?? 0)
+            }.sorted { $0.full.lowercased() < $1.full.lowercased() }
+        } catch {
+            add(.fail, tr("Repos laden fehlgeschlagen: ", "Loading repos failed: ") + ((error as? GHError)?.firstLine ?? error.localizedDescription))
+        }
+    }
+
+    func setVisibility(_ repo: RepoItem, toPrivate: Bool) async {
+        do {
+            try await GH.api("repos/\(repo.full)", method: "PATCH", body: ["visibility": toPrivate ? "private" : "public"])
+            add(.ok, toPrivate ? tr("\(repo.full): jetzt privat", "\(repo.full): now private")
+                               : tr("\(repo.full): jetzt öffentlich", "\(repo.full): now public"))
+        } catch {
+            add(.fail, "\(repo.full): " + ((error as? GHError)?.firstLine ?? error.localizedDescription))
+        }
+        await loadRepos()
+    }
 
     // MARK: Laden
 
@@ -62,7 +94,7 @@ final class Store: ObservableObject {
         defer { loading = false }
         let auth = await GH.authStatus()
         guard auth.ok else {
-            fatal = auth.detail.isEmpty ? "Nicht bei GitHub angemeldet." : auth.detail
+            fatal = auth.detail.isEmpty ? tr("Nicht bei GitHub angemeldet.", "Not signed in to GitHub.") : auth.detail
             return
         }
         user = auth.user
@@ -159,7 +191,7 @@ final class Store: ObservableObject {
     }
 
     private func installOne(_ f: Fork, mode: SyncMode, runAfter: Bool) async {
-        if let e = f.error { add(.warn, "\(f.name): übersprungen (\(e))"); return }
+        if let e = f.error { add(.warn, tr("\(f.name): übersprungen (\(e))", "\(f.name): skipped (\(e))")); return }
         var body: [String: Any] = [
             "message": "Add upstream sync workflow (forksync, mode \(mode.rawValue))",
             "content": Data(WorkflowTemplate.render(f, mode: mode, cron: cron).utf8).base64EncodedString(),
@@ -169,30 +201,30 @@ final class Store: ObservableObject {
             try await GH.api("repos/\(f.full)/contents/\(WorkflowTemplate.wfPath)", method: "PUT", body: body)
         } catch {
             let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
-            let hint = msg.lowercased().contains("workflow") ? " → im Terminal `gh auth refresh -s workflow` ausführen" : ""
-            add(.fail, "\(f.name): Schreiben fehlgeschlagen: \(msg)\(hint)")
+            let hint = msg.lowercased().contains("workflow") ? tr(" → im Terminal `gh auth refresh -s workflow` ausführen", " → run `gh auth refresh -s workflow` in Terminal") : ""
+            add(.fail, tr("\(f.name): Schreiben fehlgeschlagen: \(msg)\(hint)", "\(f.name): write failed: \(msg)\(hint)"))
             return
         }
         var notes: [String] = []
         do { try await GH.api("repos/\(f.full)/actions/permissions", method: "PUT", body: ["enabled": true]) }
-        catch { notes.append("Actions im Fork manuell aktivieren") }
+        catch { notes.append(tr("Actions im Fork manuell aktivieren", "Enable Actions in the fork manually")) }
         if mode != .ff {
             do {
                 try await GH.api("repos/\(f.full)/actions/permissions/workflow", method: "PUT",
                                  body: ["default_workflow_permissions": "write", "can_approve_pull_request_reviews": true])
             } catch {
-                notes.append("Settings › Actions › General: „Allow GitHub Actions to create and approve pull requests“ manuell aktivieren")
+                notes.append(tr("Settings › Actions › General: „Allow GitHub Actions to create and approve pull requests“ manuell aktivieren", "Enable manually under Settings › Actions › General: “Allow GitHub Actions to create and approve pull requests”"))
             }
         }
-        if !(await enableWorkflow(f)) { notes.append("Workflow konnte nicht aktiviert werden (Reiter „Actions“ des Forks)") }
-        if runAfter, !(await dispatch(f)) { notes.append("Testlauf konnte nicht gestartet werden") }
-        add(.ok, "\(f.name): eingerichtet (Modus \(mode.rawValue))")
+        if !(await enableWorkflow(f)) { notes.append(tr("Workflow konnte nicht aktiviert werden (Reiter „Actions“ des Forks)", "Workflow could not be enabled (Actions tab of the fork)")) }
+        if runAfter, !(await dispatch(f)) { notes.append(tr("Testlauf konnte nicht gestartet werden", "Test run could not be started")) }
+        add(.ok, tr("\(f.name): eingerichtet (Modus \(mode.rawValue))", "\(f.name): set up (mode \(mode.rawValue))"))
         notes.forEach { add(.warn, "\(f.name): \($0)") }
     }
 
     func adaptAll() async {
         let ids = Set(forks.filter(\.needsAdapt).map(\.id))
-        guard !ids.isEmpty else { add(.info, "Nichts anzupassen."); return }
+        guard !ids.isEmpty else { add(.info, tr("Nichts anzupassen.", "Nothing to adjust.")); return }
         await install(ids, mode: .auto, runAfter: false)
     }
 
@@ -204,13 +236,13 @@ final class Store: ObservableObject {
             do {
                 let r = try await GH.api("repos/\(f.full)/merge-upstream", method: "POST", body: ["branch": f.branch]) as? [String: Any]
                 switch r?["merge_type"] as? String {
-                case "none": add(.ok, "\(f.name): schon aktuell")
-                case "fast-forward": add(.ok, "\(f.name): Fast-Forward durchgeführt")
-                default: add(.ok, "\(f.name): Original eingemergt, eigene Commits bleiben erhalten")
+                case "none": add(.ok, tr("\(f.name): schon aktuell", "\(f.name): already up to date"))
+                case "fast-forward": add(.ok, tr("\(f.name): Fast-Forward durchgeführt", "\(f.name): fast-forwarded"))
+                default: add(.ok, tr("\(f.name): Original eingemergt, eigene Commits bleiben erhalten", "\(f.name): upstream merged, own commits kept"))
                 }
             } catch {
                 let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
-                let conflict = msg.lowercased().contains("conflict") ? " → Konflikt, bitte auf GitHub manuell lösen" : ""
+                let conflict = msg.lowercased().contains("conflict") ? tr(" → Konflikt, bitte auf GitHub manuell lösen", " → conflict, please resolve manually on GitHub") : ""
                 add(.fail, "\(f.name): \(msg)\(conflict)")
             }
             busy.remove(f.id)
@@ -236,7 +268,7 @@ final class Store: ObservableObject {
             do {
                 try await GH.api("repos/\(f.full)/contents/\(WorkflowTemplate.wfPath)", method: "DELETE",
                                  body: ["message": "Remove upstream sync workflow (forksync)", "sha": sha])
-                add(.ok, "\(f.name): Auto-Sync entfernt")
+                add(.ok, tr("\(f.name): Auto-Sync entfernt", "\(f.name): auto-sync removed"))
             } catch {
                 add(.fail, "\(f.name): \((error as? GHError)?.firstLine ?? error.localizedDescription)")
             }
