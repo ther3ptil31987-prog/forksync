@@ -12,7 +12,18 @@ enum Auth {
 
     // MARK: Schlüsselbund
 
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: String?
+    nonisolated(unsafe) private static var loaded = false
+
+    /// Wird nur einmal aus dem Schlüsselbund gelesen, damit macOS nicht bei jedem API-Aufruf nachfragt.
     static var token: String? {
+        lock.lock(); defer { lock.unlock() }
+        if !loaded { cache = readKeychain(); loaded = true }
+        return cache
+    }
+
+    private static func readKeychain() -> String? {
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                 kSecAttrService as String: service, kSecAttrAccount as String: account,
                                 kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
@@ -23,6 +34,7 @@ enum Auth {
 
     static func save(_ token: String) {
         delete()
+        lock.lock(); cache = token; loaded = true; lock.unlock()
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                 kSecAttrService as String: service, kSecAttrAccount as String: account,
                                 kSecValueData as String: Data(token.utf8)]
@@ -30,6 +42,7 @@ enum Auth {
     }
 
     static func delete() {
+        lock.lock(); cache = nil; loaded = true; lock.unlock()
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                 kSecAttrService as String: service, kSecAttrAccount as String: account]
         SecItemDelete(q as CFDictionary)
