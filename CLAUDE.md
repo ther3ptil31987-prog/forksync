@@ -15,3 +15,6 @@ GitHub-Integrationstest (legt temporäre Repos an, löscht sie wieder): `python3
 
 Debug-Snapshot der Oberfläche ohne Bildschirmaufnahme-Recht:
 `FORKSYNC_SNAPSHOT=/pfad/bild.png build/ForkSync.app/Contents/MacOS/ForkSync`
+
+## Release (notarisiert)
+`./build_app.sh --release` baut `build/ForkSync.dmg` (Developer ID, notarisiert, gestaplet). Zugangsdaten: `~/.config/forksync/notary.env` (nicht im Repo).

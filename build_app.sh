@@ -61,6 +61,7 @@ if [[ "${1:-}" == "--release" ]]; then
   rm -f build/ForkSync.zip build/ForkSync.dmg
   hdiutil create -volname ForkSync -srcfolder "$APP" -ov -format UDZO build/ForkSync.dmg >/dev/null
   codesign --force --timestamp --sign "$IDENTITY" build/ForkSync.dmg >/dev/null
+  xcrun notarytool submit build/ForkSync.dmg --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
   xcrun stapler staple build/ForkSync.dmg
   spctl -a -t exec -vv "$APP" || true
   echo "Release: build/ForkSync.dmg"
