@@ -109,7 +109,7 @@ struct ForkRow: View {
                     Label("Auto · \(mode.short)", systemImage: "bolt.fill")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(fork.needsAdapt ? .orange : .green)
-                        .help(fork.needsAdapt ? "Eigene Commits vorhanden – Modus „pr“ empfohlen" : "Täglicher Auto-Sync aktiv")
+                        .help(fork.needsAdapt ? "Eigene Commits vorhanden – Modus „auto“ empfohlen" : "Täglicher Auto-Sync aktiv")
                 } else {
                     Text("–").foregroundStyle(.tertiary)
                 }
@@ -132,10 +132,9 @@ struct ActionBar: View {
     var body: some View {
         HStack(spacing: 12) {
             Picker("Modus", selection: $store.modeChoice) {
-                Text("Automatisch").tag(SyncMode?.none)
-                ForEach(SyncMode.allCases) { Text($0.title).tag(SyncMode?.some($0)) }
+                ForEach(SyncMode.allCases) { Text($0.title).tag($0) }
             }
-            .frame(width: 280)
+            .frame(width: 320)
             HStack(spacing: 4) {
                 Text("Cron (UTC)").foregroundStyle(.secondary)
                 TextField("", text: $store.cron).textFieldStyle(.roundedBorder)
@@ -144,8 +143,8 @@ struct ActionBar: View {
             Spacer()
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
-                    Label("\(adaptCount) auf „pr“ umstellen", systemImage: "wand.and.stars")
-                }.help("ff-Forks mit eigenen Commits auf Pull-Request-Modus umstellen")
+                    Label("\(adaptCount) auf „auto“ umstellen", systemImage: "wand.and.stars")
+                }.help("ff-Forks mit eigenen Commits auf Modus „auto“ umstellen (eigene Commits bleiben erhalten)")
             }
             Button { showLog = true } label: { Label("Protokoll", systemImage: "list.bullet.rectangle") }
             Button { Task { await store.runNow(selection) } } label: { Label("Jetzt syncen", systemImage: "play.fill") }

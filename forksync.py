@@ -13,8 +13,11 @@ Befehle:
     remove   [repo ...]   Workflow wieder entfernen
 
 Modi:
-    ff  Nur Fast-Forward. Hat der Fork eigene Commits, wird nichts veraendert.
-    pr  Fast-Forward wenn moeglich, sonst Pull Request "upstream-sync" zur Pruefung.
+    auto  Standard. Keine eigenen Commits -> Spiegel (Fast-Forward). Eigene Commits ->
+          Original wird eingemergt, eigene Commits bleiben erhalten (nie Force-Push auf
+          den Default-Branch). Bei Konflikt: Pull Request "upstream-sync".
+    ff    Nur Fast-Forward. Hat der Fork eigene Commits, wird nichts veraendert.
+    pr    Fast-Forward wenn moeglich, sonst immer Pull Request "upstream-sync".
 """
 from __future__ import annotations
 
@@ -29,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 WF_NAME = "upstream-sync.yml"
 WF_PATH = f".github/workflows/{WF_NAME}"
-MODES = ("ff", "pr")
+MODES = ("auto", "ff", "pr")
 
 WORKFLOW = """\
 # mode: @@MODE@@
@@ -71,6 +74,17 @@ jobs:
           if [ "@@MODE@@" = "ff" ]; then
             echo "::warning::Fork hat eigene Commits, Fast-Forward nicht moeglich (Modus ff). Nichts geaendert."
             exit 0
+          fi
+
+          if [ "@@MODE@@" = "auto" ]; then
+            git config user.name "forksync"
+            git config user.email "forksync@users.noreply.github.com"
+            if git merge --no-edit "$UP" && git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+              echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+            fi
+            git merge --abort 2>/dev/null || true
+            git reset --hard "origin/@@BRANCH@@"
+            echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
           fi
 
           git push --force origin "$UP:refs/heads/upstream-sync"
@@ -169,7 +183,7 @@ def load_forks() -> list[dict]:
 
 
 def recommend(i: dict) -> str:
-    return "ff" if i["ahead"] == 0 else "pr"
+    return "auto"
 
 
 def status_text(i: dict) -> str:
@@ -186,7 +200,7 @@ def status_text(i: dict) -> str:
 
 
 def needs_adapt(i: dict) -> bool:
-    return bool(i["wf"]) and i["wf"]["mode"] == "ff" and i.get("ahead", 0) > 0
+    return bool(i["wf"]) and i["wf"]["mode"] == "ff" and i.get("ahead", 0) > 0  # -> auto
 
 
 # ------------------------------------------------------------------ Ausgabe/Wahl
@@ -292,7 +306,7 @@ def do_install(i: dict, mode: str | None, cron: str, run: bool) -> None:
         api(f"repos/{i['full']}/actions/permissions", "PUT", {"enabled": True})
     except GhError:
         notes.append("Actions bitte im Reiter 'Actions' des Forks manuell aktivieren")
-    if mode == "pr":
+    if mode in ("pr", "auto"):
         try:  # noetig, damit der Workflow Pull Requests anlegen darf
             api(f"repos/{i['full']}/actions/permissions/workflow", "PUT",
                 {"default_workflow_permissions": "write", "can_approve_pull_request_reviews": True})
@@ -312,7 +326,7 @@ def cmd_status(args, infos):
         print("\nAchtung: Modus 'ff' reicht hier nicht mehr (eigene Commits):")
         for i in warn:
             print(f"  - {i['name']}")
-        print("Mit `forksync.py adapt` auf Modus 'pr' umstellen.")
+        print("Mit `forksync.py adapt` auf Modus 'auto' umstellen.")
 
 
 def cmd_install(args, infos):
@@ -331,10 +345,10 @@ def cmd_adapt(args, infos):
         print("Nichts anzupassen.")
         return
     for i in todo:
-        print(f"{i['name']}: ff -> pr ({i['ahead']} eigene Commits)")
+        print(f"{i['name']}: ff -> auto ({i['ahead']} eigene Commits)")
     confirm(f"\n{len(todo)} Fork(s) umstellen?", args.yes)
     for i in todo:
-        do_install(i, "pr", args.cron, False)
+        do_install(i, "auto", args.cron, False)
 
 
 def cmd_run(args, infos):

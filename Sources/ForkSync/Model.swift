@@ -1,10 +1,16 @@
 import SwiftUI
 
 enum SyncMode: String, CaseIterable, Identifiable {
-    case ff, pr
+    case auto, ff, pr
     var id: String { rawValue }
-    var title: String { self == .ff ? "Nur Fast-Forward" : "Fast-Forward + Pull Request" }
-    var short: String { self == .ff ? "ff" : "pr" }
+    var title: String {
+        switch self {
+        case .auto: "Automatisch (Spiegel / Merge)"
+        case .ff: "Nur Spiegeln (Fast-Forward)"
+        case .pr: "Immer Pull Request"
+        }
+    }
+    var short: String { rawValue }
 }
 
 struct Fork: Identifiable, Hashable {
@@ -23,7 +29,7 @@ struct Fork: Identifiable, Hashable {
     var url: URL { URL(string: "https://github.com/\(full)")! }
 
     var hasAutoSync: Bool { workflowSha != nil }
-    var recommendedMode: SyncMode { ahead == 0 ? .ff : .pr }
+    var recommendedMode: SyncMode { .auto }
     var needsAdapt: Bool { workflowMode == .ff && ahead > 0 }
 
     enum State { case current, behind, ahead, diverged, error }
@@ -145,6 +151,17 @@ jobs:
           if [ "@@MODE@@" = "ff" ]; then
             echo "::warning::Fork hat eigene Commits, Fast-Forward nicht moeglich (Modus ff). Nichts geaendert."
             exit 0
+          fi
+
+          if [ "@@MODE@@" = "auto" ]; then
+            git config user.name "forksync"
+            git config user.email "forksync@users.noreply.github.com"
+            if git merge --no-edit "$UP" && git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+              echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
+            fi
+            git merge --abort 2>/dev/null || true
+            git reset --hard "origin/@@BRANCH@@"
+            echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
           fi
 
           git push --force origin "$UP:refs/heads/upstream-sync"

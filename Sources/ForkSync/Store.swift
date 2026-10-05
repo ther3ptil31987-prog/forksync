@@ -9,7 +9,7 @@ final class Store: ObservableObject {
     @Published var user: String?
     @Published var fatal: String?
     @Published var missingWorkflowScope = false
-    @Published var modeChoice: SyncMode? = nil   // nil = automatisch empfehlen
+    @Published var modeChoice: SyncMode = .auto
     @Published var cron = "17 5 * * *"
 
     func add(_ kind: LogLine.Kind, _ text: String) { log.append(LogLine(kind: kind, text: text)) }
@@ -69,7 +69,7 @@ final class Store: ObservableObject {
                 if let d = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
                    let text = String(data: d, encoding: .utf8),
                    let r = text.range(of: #"# mode: (ff|pr)"#, options: .regularExpression) {
-                    fork.workflowMode = SyncMode(rawValue: String(text[r].suffix(2)))
+                    fork.workflowMode = SyncMode(rawValue: String(text[r].dropFirst(8)))
                 }
             }
         } catch {
@@ -107,7 +107,7 @@ final class Store: ObservableObject {
         var notes: [String] = []
         do { try await GH.api("repos/\(f.full)/actions/permissions", method: "PUT", body: ["enabled": true]) }
         catch { notes.append("Actions im Fork manuell aktivieren") }
-        if mode == .pr {
+        if mode != .ff {
             do {
                 try await GH.api("repos/\(f.full)/actions/permissions/workflow", method: "PUT",
                                  body: ["default_workflow_permissions": "write", "can_approve_pull_request_reviews": true])
@@ -123,7 +123,7 @@ final class Store: ObservableObject {
     func adaptAll() async {
         let ids = Set(forks.filter(\.needsAdapt).map(\.id))
         guard !ids.isEmpty else { add(.info, "Nichts anzupassen."); return }
-        await install(ids, mode: .pr, runAfter: false)
+        await install(ids, mode: .auto, runAfter: false)
     }
 
     func runNow(_ ids: Set<String>) async {
