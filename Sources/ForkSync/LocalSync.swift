@@ -208,7 +208,13 @@ extension Store {
         p.prompt = tr("Auswählen", "Choose")
         p.message = tr("Ordner, in den die Repos geklont werden (je Repo ein Unterordner)", "Folder the repos are cloned into (one subfolder per repo)")
         p.directoryURL = URL(fileURLWithPath: localRoot).deletingLastPathComponent()
-        if p.runModal() == .OK, let u = p.url { localRoot = u.path; local = [:] }
+        if p.runModal() == .OK, let u = p.url { localRoot = u.path; local = [:]; Task { await reloadLocal() } }
+    }
+
+    /// Alles neu einlesen: Repo-Liste von GitHub und lokaler Stand aller ausgewählten Repos.
+    func reloadLocal() async {
+        await loadRepos()
+        await checkLocal()
     }
 
     /// Nur vergleichen (fetch + Status), nichts verändern.

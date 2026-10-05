@@ -45,6 +45,9 @@ struct LocalView: View {
                 Button { NSWorkspace.shared.open(URL(fileURLWithPath: store.localRoot)) } label: { Image(systemName: "arrow.up.forward.app") }
                     .help(tr("Im Finder öffnen", "Open in Finder"))
                     .disabled(!FileManager.default.fileExists(atPath: store.localRoot))
+                Button { Task { await store.reloadLocal() } } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(store.localBusy || store.reposLoading)
+                    .help(tr("Alles neu einlesen: Repo-Liste von GitHub und lokaler Stand", "Reload everything: repo list from GitHub and local state"))
                 Spacer(minLength: 12)
             }
             .padding(.horizontal, 12).padding(.top, 8)
