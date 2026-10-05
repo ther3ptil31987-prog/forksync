@@ -200,13 +200,21 @@ final class Store: ObservableObject {
 
     private func installOne(_ f: Fork, mode: SyncMode, runAfter: Bool) async {
         if let e = f.error { add(.warn, tr("\(f.name): übersprungen (\(e))", "\(f.name): skipped (\(e))")); return }
+        let content = Data(WorkflowTemplate.render(f, mode: mode, cron: cron).utf8).base64EncodedString()
         var body: [String: Any] = [
             "message": "Add upstream sync workflow (forksync, mode \(mode.rawValue))",
-            "content": Data(WorkflowTemplate.render(f, mode: mode, cron: cron).utf8).base64EncodedString(),
+            "content": content,
         ]
         if let sha = f.workflowSha { body["sha"] = sha }
+        // Unveränderte Datei nicht erneut committen (sonst wächst die Historie bei jedem Einrichten).
+        var unchanged = false
+        if f.workflowSha != nil,
+           let cur = try? await GH.api("repos/\(f.full)/contents/\(WorkflowTemplate.wfPath)") as? [String: Any],
+           let b64 = cur["content"] as? String {
+            unchanged = b64.filter { !$0.isWhitespace } == content
+        }
         do {
-            try await GH.api("repos/\(f.full)/contents/\(WorkflowTemplate.wfPath)", method: "PUT", body: body)
+            if !unchanged { try await GH.api("repos/\(f.full)/contents/\(WorkflowTemplate.wfPath)", method: "PUT", body: body) }
         } catch {
             let msg = (error as? GHError)?.firstLine ?? error.localizedDescription
             let hint = msg.lowercased().contains("workflow") ? tr(" → im Terminal `gh auth refresh -s workflow` ausführen", " → run `gh auth refresh -s workflow` in Terminal") : ""
