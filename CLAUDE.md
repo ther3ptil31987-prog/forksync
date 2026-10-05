@@ -11,5 +11,7 @@ Sobald eine neue Version fertig ist, selbständig und ohne Rückfrage:
 1. `pkill ForkSync; ./build_app.sh --install && open /Applications/ForkSync.app`
 2. committen und pushen
 
+GitHub-Integrationstest (legt temporäre Repos an, löscht sie wieder): `python3 tests/github_matrix.py`
+
 Debug-Snapshot der Oberfläche ohne Bildschirmaufnahme-Recht:
 `FORKSYNC_SNAPSHOT=/pfad/bild.png build/ForkSync.app/Contents/MacOS/ForkSync`
