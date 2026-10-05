@@ -48,7 +48,7 @@ struct Fork: Identifiable, Hashable {
         switch state {
         case .current: return "Aktuell"
         case .behind: return behind == 1 ? "1 neuer Commit im Original" : "\(behind) neue Commits im Original"
-        case .ahead: return "\(ahead) eigene Commits"
+        case .ahead: return ahead == 1 ? "1 eigener Commit" : "\(ahead) eigene Commits"
         case .diverged: return "Getrennt: \(ahead) eigene / \(behind) neue"
         case .error: return "Fehler"
         }
