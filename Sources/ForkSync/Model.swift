@@ -149,8 +149,10 @@ enum LogStore {
         return (try? JSONDecoder().decode([LogLine].self, from: data)) ?? []
     }
 
+    static let limit = 500
+
     static func save(_ lines: [LogLine]) {
-        if let data = try? JSONEncoder().encode(Array(lines.suffix(500))) { try? data.write(to: url, options: .atomic) }
+        if let data = try? JSONEncoder().encode(Array(lines.suffix(limit))) { try? data.write(to: url, options: .atomic) }
     }
 }
 
@@ -162,10 +164,16 @@ enum WorkflowTemplate {
         template
             .replacingOccurrences(of: "@@MODE@@", with: mode.rawValue)
             .replacingOccurrences(of: "@@CRON@@", with: cron)
-            .replacingOccurrences(of: "@@UPSTREAM@@", with: f.parent ?? "")
-            .replacingOccurrences(of: "@@UPSTREAM_BRANCH@@", with: f.parentBranch ?? "")
-            .replacingOccurrences(of: "@@BRANCH@@", with: f.branch)
+            .replacingOccurrences(of: "@@UPSTREAM@@", with: yaml(f.parent ?? ""))
+            .replacingOccurrences(of: "@@UPSTREAM_BRANCH@@", with: yaml(f.parentBranch ?? ""))
+            .replacingOccurrences(of: "@@BRANCH@@", with: yaml(f.branch))
     }
+
+    /// Wert für einen einfach quotierten YAML-String. Die Werte landen nur in `env:`/`with:`, nie direkt im Shell-Skript.
+    private static func yaml(_ s: String) -> String { s.replacingOccurrences(of: "'", with: "''") }
+
+    /// Namen, die GitHub Actions als Ausdruck auswerten würde oder die das YAML sprengen, werden nicht eingesetzt.
+    static func isSafe(_ s: String) -> Bool { !s.contains("${{") && !s.contains(where: \.isNewline) }
 
     // Identisch zur Vorlage in forksync.py (erste Zeile `# mode:` erkennt das Tool wieder).
     static let template = #"""
@@ -185,54 +193,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: @@BRANCH@@
+          ref: '@@BRANCH@@'
           fetch-depth: 0
       - name: Sync
         env:
           GH_TOKEN: ${{ github.token }}
+          MODE: '@@MODE@@'
+          BRANCH: '@@BRANCH@@'
+          UPSTREAM: '@@UPSTREAM@@'
+          UPSTREAM_BRANCH: '@@UPSTREAM_BRANCH@@'
         run: |
           set -e
-          git remote add upstream "https://github.com/@@UPSTREAM@@.git"
-          git fetch upstream "@@UPSTREAM_BRANCH@@"
-          UP="upstream/@@UPSTREAM_BRANCH@@"
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch upstream "$UPSTREAM_BRANCH"
+          UP="upstream/$UPSTREAM_BRANCH"
 
           if git merge-base --is-ancestor "$UP" HEAD; then
             echo "Schon aktuell"; exit 0
           fi
 
           if git merge-base --is-ancestor HEAD "$UP"; then
-            if git push origin "$UP:refs/heads/@@BRANCH@@"; then
+            if git push origin "$UP:refs/heads/$BRANCH"; then
               echo "Fast-Forward durchgefuehrt"; exit 0
             fi
-            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null; then
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null; then
               echo "Fast-Forward durchgefuehrt (GitHub-Sync-API)"; exit 0
             fi
             echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
             exit 1
           fi
 
-          if [ "@@MODE@@" = "ff" ]; then
+          if [ "$MODE" = "ff" ]; then
             echo "::warning::Fork hat eigene Commits, Fast-Forward nicht moeglich (Modus ff). Nichts geaendert."
             exit 0
           fi
 
-          if [ "@@MODE@@" = "auto" ]; then
+          if [ "$MODE" = "auto" ]; then
             git config user.name "forksync"
             git config user.email "forksync@users.noreply.github.com"
             if git merge --no-edit "$UP"; then
-              if git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+              if git push origin "HEAD:refs/heads/$BRANCH"; then
                 echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
               fi
-              git reset --hard "origin/@@BRANCH@@"
-              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+              git reset --hard "origin/$BRANCH"
+              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null 2>&1; then
                 echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
               fi
               echo "::error::Merge sauber, aber Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
               exit 1
             fi
             git merge --abort 2>/dev/null || true
-            git reset --hard "origin/@@BRANCH@@"
-            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+            git reset --hard "origin/$BRANCH"
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null 2>&1; then
               echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
             fi
             echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
@@ -243,9 +255,9 @@ jobs:
             exit 1
           fi
           if [ -z "$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --state open --json number -q '.[].number')" ]; then
-            gh pr create --repo "$GITHUB_REPOSITORY" --base "@@BRANCH@@" --head upstream-sync \
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BRANCH" --head upstream-sync \
               --title "Sync with upstream" \
-              --body "Automatisch erstellt von forksync: neue Aenderungen aus @@UPSTREAM@@."
+              --body "Automatisch erstellt von forksync: neue Aenderungen aus $UPSTREAM."
           fi
 
 """#

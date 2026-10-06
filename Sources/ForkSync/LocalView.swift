@@ -42,6 +42,7 @@ struct LocalView: View {
                 Image(systemName: "folder")
                 Text(shortRoot).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.middle)
                 Button(tr("Ändern …", "Change …")) { store.chooseLocalRoot() }
+                    .disabled(store.localBusy)
                 Button { NSWorkspace.shared.open(URL(fileURLWithPath: store.localRoot)) } label: { Image(systemName: "arrow.up.forward.app") }
                     .help(tr("Im Finder öffnen", "Open in Finder"))
                     .disabled(!FileManager.default.fileExists(atPath: store.localRoot))

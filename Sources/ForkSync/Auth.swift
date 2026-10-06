@@ -32,13 +32,15 @@ enum Auth {
         return String(data: d, encoding: .utf8)
     }
 
-    static func save(_ token: String) {
+    /// Liefert `false`, wenn der Schlüsselbund ablehnt; das Token gilt dann nur für diese Sitzung.
+    @discardableResult
+    static func save(_ token: String) -> Bool {
         delete()
         lock.lock(); cache = token; loaded = true; lock.unlock()
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                 kSecAttrService as String: service, kSecAttrAccount as String: account,
                                 kSecValueData as String: Data(token.utf8)]
-        SecItemAdd(q as CFDictionary, nil)
+        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
     }
 
     static func delete() {
@@ -75,7 +77,9 @@ enum Auth {
     }
 
     /// Wartet, bis der Nutzer im Browser bestätigt hat, und speichert das Token.
-    static func finish(_ dc: DeviceCode) async throws {
+    /// Rückgabe: ob es dauerhaft im Schlüsselbund liegt.
+    @discardableResult
+    static func finish(_ dc: DeviceCode) async throws -> Bool {
         var interval = dc.interval
         let deadline = Date().addingTimeInterval(Double(dc.expires))
         while Date() < deadline {
@@ -84,7 +88,7 @@ enum Auth {
             let r = try await post("https://github.com/login/oauth/access_token", [
                 "client_id": clientID, "device_code": dc.deviceCode,
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code"])
-            if let t = r["access_token"] as? String { save(t); return }
+            if let t = r["access_token"] as? String { return save(t) }
             switch r["error"] as? String {
             case "authorization_pending": continue
             case "slow_down": interval += 5
@@ -138,15 +142,16 @@ enum Auth {
         return nil
     }
 
-    static func status(token: String) async -> (ok: Bool, user: String?, scopes: String, detail: String) {
+    static func status(token: String) async -> (ok: Bool, user: String?, scopes: String, detail: String, authError: Bool) {
         var req = URLRequest(url: URL(string: "https://api.github.com/user")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("ForkSync", forHTTPHeaderField: "User-Agent")
         guard let (data, resp) = try? await URLSession.shared.data(for: req), let http = resp as? HTTPURLResponse else {
-            return (false, nil, "", tr("Keine Verbindung zu GitHub.", "No connection to GitHub."))
+            return (false, nil, "", tr("Keine Verbindung zu GitHub.", "No connection to GitHub."), false)
         }
-        if http.statusCode == 401 { delete(); return (false, nil, "", tr("Anmeldung abgelaufen, bitte neu anmelden.", "Session expired, please sign in again.")) }
+        if http.statusCode == 401 { delete(); return (false, nil, "", tr("Anmeldung abgelaufen, bitte neu anmelden.", "Session expired, please sign in again."), true) }
         let login = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["login"] as? String
-        return (http.statusCode < 400, login, http.value(forHTTPHeaderField: "X-OAuth-Scopes") ?? "", "HTTP \(http.statusCode)")
+        let msg = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String).map { "\($0) (HTTP \(http.statusCode))" }
+        return (http.statusCode < 400, login, http.value(forHTTPHeaderField: "X-OAuth-Scopes") ?? "", msg ?? "HTTP \(http.statusCode)", false)
     }
 }

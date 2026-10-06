@@ -9,6 +9,9 @@ enum Git {
         "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
     ].first { FileManager.default.isExecutableFile(atPath: $0) }
 
+    /// Große Repos brauchen deutlich länger als ein `fetch`.
+    static let cloneTimeout: TimeInterval = 3600
+
     struct Output: Sendable {
         let code: Int32
         let out: String
@@ -166,8 +169,15 @@ enum LocalGit {
             let f = await Git.run(["fetch", "--quiet", "--prune", "origin"], in: dir, token: token)
             if !f.ok { r.state = .error; r.detail = f.message; return r }
         }
-        r.dirty = !(await Git.run(["status", "--porcelain"], in: dir)).trimmed.isEmpty
+        // Unversionierte Dateien (.DS_Store, Build-Ordner) zählen nicht: ein Fast-Forward überschreibt sie nie,
+        // git bricht bei einer echten Kollision selbst ab.
+        r.dirty = !(await Git.run(["status", "--porcelain", "--untracked-files=no"], in: dir)).trimmed.isEmpty
         r.branch = (await Git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: dir)).trimmed
+        guard (await Git.run(["rev-parse", "--verify", "--quiet", "HEAD"], in: dir)).ok else {
+            r.state = .noUpstream
+            r.detail = tr("Leeres Repository (noch keine Commits).", "Empty repository (no commits yet).")
+            return r
+        }
         let c = await Git.run(["rev-list", "--left-right", "--count", "HEAD...@{u}"], in: dir)
         let nums = c.trimmed.split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
         guard c.ok, nums.count == 2 else {
@@ -208,7 +218,9 @@ extension Store {
         p.prompt = tr("Auswählen", "Choose")
         p.message = tr("Ordner, in den die Repos geklont werden (je Repo ein Unterordner)", "Folder the repos are cloned into (one subfolder per repo)")
         p.directoryURL = URL(fileURLWithPath: localRoot).deletingLastPathComponent()
-        if p.runModal() == .OK, let u = p.url { localRoot = u.path; local = [:]; Task { await reloadLocal() } }
+        // Nicht während eines laufenden Abgleichs wechseln: dessen Ergebnisse gehören noch zum alten Ordner.
+        guard !localBusy else { return }
+        if p.runModal() == .OK, let u = p.url, !localBusy { localRoot = u.path; local = [:]; localWarned = [:]; Task { await reloadLocal() } }
     }
 
     /// Alles neu einlesen: Repo-Liste von GitHub und lokaler Stand aller ausgewählten Repos.
@@ -246,7 +258,7 @@ extension Store {
             var notes: [(LogLine.Kind, String)] = []
             switch r.state {
             case .notCloned:
-                let c = await Git.run(["clone", "--quiet", "https://github.com/\(item.full).git", r.dir], in: root, token: token)
+                let c = await Git.run(["clone", "--quiet", "https://github.com/\(item.full).git", r.dir], in: root, token: token, timeout: Git.cloneTimeout)
                 if c.ok {
                     notes.append((.ok, tr("\(item.name): geklont", "\(item.name): cloned")))
                     r = await LocalGit.inspect(item, root: root, token: token, fetch: false)
@@ -276,7 +288,13 @@ extension Store {
         var changed = 0, problems = 0
         for (r, notes) in results {
             local[r.id] = r
-            for (k, t) in notes { add(k, t); if k == .ok { changed += 1 } else { problems += 1 } }
+            let hint = notes.filter { $0.0 != .ok }.map(\.1).joined(separator: "\n")
+            // Im automatischen Lauf denselben Hinweis nicht bei jedem Durchgang erneut protokollieren.
+            let repeated = quiet && !hint.isEmpty && localWarned[r.id] == hint
+            localWarned[r.id] = hint.isEmpty ? nil : hint
+            for (k, t) in notes {
+                if k == .ok { add(k, t); changed += 1 } else if !repeated { add(k, t); problems += 1 }
+            }
         }
         if !quiet || changed > 0 || problems > 0 {
             add(problems > 0 ? .warn : .ok, tr("Lokal geprüft: \(items.count) Repos, \(changed) aktualisiert, \(problems) Hinweise", "Local check: \(items.count) repos, \(changed) updated, \(problems) notices"))
@@ -284,15 +302,21 @@ extension Store {
     }
 
     /// Wiederkehrender Abgleich, solange ForkSync läuft.
-    func startLocalAuto() {
+    /// `syncNow: false` wartet erst ein Intervall ab (z. B. wenn nur das Intervall geändert wurde).
+    func startLocalAuto(syncNow: Bool = true) {
         localTask?.cancel()
         localTask = nil
         guard localAuto else { return }
         localTask = Task { [weak self] in
+            var wait = !syncNow
             while !Task.isCancelled {
                 guard let self else { return }
+                if wait {
+                    try? await Task.sleep(for: .seconds(Double(self.localInterval) * 60))
+                    if Task.isCancelled { return }
+                }
+                wait = true
                 await self.syncLocal(quiet: true)
-                try? await Task.sleep(for: .seconds(Double(self.localInterval) * 60))
             }
         }
     }

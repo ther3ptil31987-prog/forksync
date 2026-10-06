@@ -62,43 +62,44 @@ enum GH {
             return try await Auth.request(path, method: method, body: body, paginate: paginate, token: token)
         }
         var args = ["api", path, "-X", method]
-        if paginate { args += ["--paginate", "--slurp"] }
+        // Je Element eine Zeile; `--slurp` gibt es erst in neueren gh-Versionen.
+        if paginate { args += ["--paginate", "--jq", ".[]"] }
         var input: Data?
         if let body {
             args += ["--input", "-"]
             input = try JSONSerialization.data(withJSONObject: body)
         }
         let data = try await run(args, stdin: input)
-        guard !data.allSatisfy({ $0 == 0x20 || $0 == 0x0A }) else { return nil }
-        let obj = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        if paginate, let pages = obj as? [Any] {
-            return pages.flatMap { ($0 as? [Any]) ?? [$0] }
+        if paginate {
+            return try data.split(separator: 0x0A).filter { !$0.allSatisfy { $0 == 0x20 || $0 == 0x0D } }
+                .map { try JSONSerialization.jsonObject(with: Data($0), options: [.fragmentsAllowed]) }
         }
-        return obj
+        guard !data.allSatisfy({ $0 == 0x20 || $0 == 0x0A }) else { return nil }
+        return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     }
 
-    static func authStatus() async -> (ok: Bool, user: String?, hasWorkflowScope: Bool, detail: String) {
+    static func authStatus() async -> (ok: Bool, user: String?, hasWorkflowScope: Bool, detail: String, authError: Bool) {
         if let token = Auth.token {
             let s = await Auth.status(token: token)
-            return (s.ok, s.user, s.scopes.contains("workflow"), s.detail)
+            return (s.ok, s.user, s.scopes.contains("workflow"), s.detail, s.authError)
         }
         do {
             let data = try await run(["auth", "status"])
             let text = String(data: data, encoding: .utf8) ?? ""
             return parse(text)
         } catch let e as GHError {
-            return (false, nil, false, e.message)
+            return (false, nil, false, e.message, true)
         } catch {
-            return (false, nil, false, error.localizedDescription)
+            return (false, nil, false, error.localizedDescription, true)
         }
     }
 
-    private static func parse(_ text: String) -> (Bool, String?, Bool, String) {
+    private static func parse(_ text: String) -> (Bool, String?, Bool, String, Bool) {
         var user: String?
         if let r = text.range(of: #"account (\S+)"#, options: .regularExpression) {
             user = String(text[r]).replacingOccurrences(of: "account ", with: "")
         }
-        return (true, user, text.contains("workflow"), text)
+        return (true, user, text.contains("workflow"), text, false)
     }
 }
 

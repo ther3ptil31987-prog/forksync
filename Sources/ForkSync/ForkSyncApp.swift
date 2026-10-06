@@ -27,8 +27,10 @@ struct ForkSyncApp: App {
                         }
                         for l in store.log.suffix(6) { print("LOG \(l.kind.rawValue): \(l.text)") }
                         NSApp.terminate(nil)
+                        return
                     }
-                    store.startLocalAuto()
+                    // Ein weiteres Fenster (⌘N) darf die laufende Schleife nicht neu starten.
+                    if store.localTask == nil { store.startLocalAuto() }
                     if let path = ProcessInfo.processInfo.environment["FORKSYNC_SNAPSHOT"] {
                         try? await Task.sleep(for: .seconds(2))
                         for f in store.forks where f.ahead > 0 || f.parentBranch != f.branch {

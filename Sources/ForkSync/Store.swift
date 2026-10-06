@@ -9,6 +9,11 @@ final class Store: ObservableObject {
     @Published var log: [LogLine] = LogStore.load() { didSet { LogStore.save(log) } }
     @Published var user: String?
     @Published var fatal: String?
+    /// `fatal` ist ein Anmeldeproblem (sonst: Netz-/API-Fehler).
+    @Published var fatalIsAuth = true
+    /// Eine Fork-Aktion (Einrichten/Syncen/Entfernen) läuft; weitere werden so lange gesperrt.
+    @Published var working = false
+    private var refreshAgain = false
     @Published var missingWorkflowScope = false
     @Published var modeChoice: SyncMode = .auto
     @Published var schedule = Schedule.load() { didSet { schedule.save() } }
@@ -26,9 +31,11 @@ final class Store: ObservableObject {
     @Published var localRoot = LocalPrefs.root { didSet { LocalPrefs.root = localRoot } }
     @Published var localEnabled = LocalPrefs.enabled { didSet { LocalPrefs.enabled = localEnabled } }
     @Published var localAuto = LocalPrefs.auto { didSet { LocalPrefs.auto = localAuto; startLocalAuto() } }
-    @Published var localInterval = LocalPrefs.interval { didSet { LocalPrefs.interval = localInterval; startLocalAuto() } }
+    @Published var localInterval = LocalPrefs.interval { didSet { LocalPrefs.interval = localInterval; startLocalAuto(syncNow: false) } }
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
     var localTask: Task<Void, Never>?
+    /// Zuletzt gemeldeter Hinweis je Repo, damit der automatische Abgleich ihn nicht bei jedem Lauf wiederholt.
+    var localWarned: [String: String] = [:]
 
     func login() {
         loginError = nil
@@ -39,8 +46,12 @@ final class Store: ObservableObject {
                 deviceCode = dc
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(dc.userCode, forType: .string)
-                try await Auth.finish(dc)
+                let stored = try await Auth.finish(dc)
                 deviceCode = nil
+                if !stored {
+                    add(.warn, tr("Anmeldung konnte nicht im Schlüsselbund gespeichert werden – sie gilt nur bis zum Beenden.",
+                                  "Sign-in could not be stored in the keychain – it only lasts until you quit."))
+                }
                 ownLogin = true
                 await refresh()
             } catch is CancellationError {
@@ -52,7 +63,7 @@ final class Store: ObservableObject {
         }
     }
 
-    func startLogin() { fatal = tr("Anmeldung mit eigenem Konto", "Signing in with your own account"); login() }
+    func startLogin() { fatalIsAuth = true; fatal = tr("Anmeldung mit eigenem Konto", "Signing in with your own account"); login() }
 
     func cancelLogin() { loginTask?.cancel(); deviceCode = nil }
 
@@ -61,10 +72,16 @@ final class Store: ObservableObject {
         ownLogin = false
         forks = []
         user = nil
+        fatalIsAuth = true
         fatal = tr("Abgemeldet.", "Signed out.")
     }
 
-    func add(_ kind: LogLine.Kind, _ text: String) { log.append(LogLine(kind: kind, text: text)) }
+    func add(_ kind: LogLine.Kind, _ text: String) {
+        var l = log
+        l.append(LogLine(kind: kind, text: text))
+        if l.count > LogStore.limit { l.removeFirst(l.count - LogStore.limit) }
+        log = l
+    }
 
     // MARK: Repos (Sichtbarkeit)
 
@@ -80,6 +97,9 @@ final class Store: ObservableObject {
                          archived: r["archived"] as? Bool ?? false,
                          stars: r["stargazers_count"] as? Int ?? 0, forks: r["forks_count"] as? Int ?? 0)
             }.sorted { $0.full.lowercased() < $1.full.lowercased() }
+            // Gelöschte oder umbenannte Repos aus der lokalen Auswahl entfernen.
+            let known = Set(repos.map(\.full))
+            if !repos.isEmpty, !localEnabled.isSubset(of: known) { localEnabled.formIntersection(known) }
         } catch {
             add(.fail, tr("Repos laden fehlgeschlagen: ", "Loading repos failed: ") + ((error as? GHError)?.firstLine ?? error.localizedDescription))
         }
@@ -98,13 +118,23 @@ final class Store: ObservableObject {
 
     // MARK: Laden
 
+    /// Läuft schon ein Laden, wird danach noch einmal geladen (z. B. nach einer Aktion), statt den Aufruf zu verwerfen.
     func refresh() async {
-        guard !loading else { return }
+        guard !loading else { refreshAgain = true; return }
         loading = true
+        repeat {
+            refreshAgain = false
+            await load()
+        } while refreshAgain
+        loading = false
+    }
+
+    private func load() async {
         fatal = nil
-        defer { loading = false }
         let auth = await GH.authStatus()
+        ownLogin = Auth.token != nil
         guard auth.ok else {
+            fatalIsAuth = auth.authError
             fatal = auth.detail.isEmpty ? tr("Nicht bei GitHub angemeldet.", "Not signed in to GitHub.") : auth.detail
             return
         }
@@ -122,8 +152,14 @@ final class Store: ObservableObject {
             }
             forks = result.sorted { $0.full.lowercased() < $1.full.lowercased() }
         } catch {
+            fatalIsAuth = false
             fatal = (error as? GHError)?.message ?? error.localizedDescription
         }
+    }
+
+    /// Branch-Name für URL-Pfad und Query (`#`, `?`, `&`, `%` … würden den Aufruf sonst zerlegen).
+    nonisolated static func enc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/")) ?? s
     }
 
     nonisolated static func inspect(_ repo: [String: Any]) async -> Fork {
@@ -136,27 +172,30 @@ final class Store: ObservableObject {
             guard let parent = detail?["parent"] as? [String: Any],
                   let pFull = parent["full_name"] as? String,
                   let pBranch = parent["default_branch"] as? String else {
-                fork.error = "Kein Original gefunden"
+                fork.error = tr("Kein Original gefunden", "No original found")
                 return fork
             }
             fork.parent = pFull
             // Gleichnamigen Branch des Originals vergleichen (Fork-main <-> Original-main), sonst dessen Standard-Branch.
-            let enc = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
-            let cmpBranch = (try? await GH.api("repos/\(pFull)/branches/\(enc)")) != nil ? branch : pBranch
+            let cmpBranch = (try? await GH.api("repos/\(pFull)/branches/\(enc(branch))")) != nil ? branch : pBranch
             fork.parentBranch = cmpBranch
-            let cmp = try await GH.api("repos/\(pFull)/compare/\(cmpBranch)...\(owner):\(branch)") as? [String: Any]
+            let cmp = try await GH.api("repos/\(pFull)/compare/\(enc(cmpBranch))...\(owner):\(enc(branch))") as? [String: Any]
             fork.ahead = cmp?["ahead_by"] as? Int ?? 0
             fork.behind = cmp?["behind_by"] as? Int ?? 0
             if fork.ahead > 0 {
                 fork.aheadKind = classify(cmp?["commits"] as? [[String: Any]] ?? [], ahead: fork.ahead, owner: owner)
             }
-            if let f = try? await GH.api("repos/\(full)/contents/\(WorkflowTemplate.wfPath)?ref=\(branch)") as? [String: Any],
+            if let f = try? await GH.api("repos/\(full)/contents/\(WorkflowTemplate.wfPath)?ref=\(enc(branch))") as? [String: Any],
                let sha = f["sha"] as? String {
                 fork.workflowSha = sha
                 if fork.behind > 0,
                    let runs = try? await GH.api("repos/\(full)/actions/workflows/\(WorkflowTemplate.wfName)/runs?per_page=1&status=completed") as? [String: Any],
-                   let last = (runs["workflow_runs"] as? [[String: Any]])?.first {
-                    fork.syncFailed = (last["conclusion"] as? String) == "failure"
+                   let last = (runs["workflow_runs"] as? [[String: Any]])?.first,
+                   (last["conclusion"] as? String) == "failure" {
+                    // Nur werten, wenn der Lauf den heutigen Stand des Forks gesehen hat. Ein älterer Fehlschlag
+                    // (z. B. vor einem „Syncen“ in der App) sagt nichts über den nächsten Lauf.
+                    let head = ((try? await GH.api("repos/\(full)/branches/\(enc(branch))") as? [String: Any])?["commit"] as? [String: Any])?["sha"] as? String
+                    fork.syncFailed = head == nil || head == (last["head_sha"] as? String)
                 }
                 let b64 = (f["content"] as? String) ?? ""
                 if let d = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
@@ -201,6 +240,9 @@ final class Store: ObservableObject {
     var setupAllIDs: Set<String> { Set(forks.filter { !$0.hasAutoSync && $0.error == nil }.map(\.id)) }
 
     func install(_ ids: Set<String>, mode: SyncMode?, runAfter: Bool = true) async {
+        guard !working else { return }
+        working = true
+        defer { working = false }
         for fork in forks where ids.contains(fork.id) {
             busy.insert(fork.id)
             await installOne(fork, mode: mode ?? fork.recommendedMode, runAfter: runAfter)
@@ -211,6 +253,9 @@ final class Store: ObservableObject {
 
     private func installOne(_ f: Fork, mode: SyncMode, runAfter: Bool) async {
         if let e = f.error { add(.warn, tr("\(f.name): übersprungen (\(e))", "\(f.name): skipped (\(e))")); return }
+        guard WorkflowTemplate.isSafe(f.branch), WorkflowTemplate.isSafe(f.parentBranch ?? "") else {
+            add(.warn, tr("\(f.name): übersprungen (Branch-Name nicht unterstützt)", "\(f.name): skipped (unsupported branch name)")); return
+        }
         let content = Data(WorkflowTemplate.render(f, mode: mode, cron: cron).utf8).base64EncodedString()
         var body: [String: Any] = [
             "message": "Add upstream sync workflow (forksync, mode \(mode.rawValue))",
@@ -244,7 +289,8 @@ final class Store: ObservableObject {
             }
         }
         if !(await enableWorkflow(f)) { notes.append(tr("Workflow konnte nicht aktiviert werden (Reiter „Actions“ des Forks)", "Workflow could not be enabled (Actions tab of the fork)")) }
-        if f.behind > 0 { await mergeUpstream(f) }
+        // Sofort syncen, aber nur wo der Modus es erlaubt: ff/pr mergen nie in einen Fork mit eigenen Commits.
+        if f.behind > 0, mode == .auto || f.ahead == 0 { await mergeUpstream(f) }
         if runAfter, !(await dispatch(f)) { notes.append(tr("Testlauf konnte nicht gestartet werden", "Test run could not be started")) }
         add(.ok, tr("\(f.name): eingerichtet (Modus \(mode.rawValue))", "\(f.name): set up (mode \(mode.rawValue))"))
         notes.forEach { add(.warn, "\(f.name): \($0)") }
@@ -259,6 +305,9 @@ final class Store: ObservableObject {
     /// Sofort mit dem eigenen Login syncen (GitHubs merge-upstream); klappt auch, wenn das Original
     /// Workflow-Dateien ändert, was der Actions-Token nicht darf. Eigene Commits bleiben erhalten.
     func syncNow(_ ids: Set<String>) async {
+        guard !working else { return }
+        working = true
+        defer { working = false }
         for f in forks where ids.contains(f.id) && f.error == nil {
             busy.insert(f.id)
             await mergeUpstream(f)
@@ -294,6 +343,9 @@ final class Store: ObservableObject {
     }
 
     func remove(_ ids: Set<String>) async {
+        guard !working else { return }
+        working = true
+        defer { working = false }
         for f in forks where ids.contains(f.id) {
             guard let sha = f.workflowSha else { continue }
             busy.insert(f.id)

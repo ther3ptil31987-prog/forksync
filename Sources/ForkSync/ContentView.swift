@@ -29,6 +29,9 @@ struct ContentView: View {
         store.forks.filter { filter.matches($0) && (search.isEmpty || $0.full.localizedCaseInsensitiveContains(search)) }
     }
 
+    /// Aktionen wirken nur auf Forks, die gerade sichtbar sind – nicht auf eine frühere Auswahl hinter Filter/Suche.
+    private var active: Set<String> { selection.intersection(visible.map(\.id)) }
+
     var body: some View {
         VStack(spacing: 0) {
             if let fatal = store.fatal {
@@ -61,7 +64,7 @@ struct ContentView: View {
                 Divider()
                 list
                 Divider()
-                ActionBar(selection: selection, showLog: $showLog, confirmRemove: $confirmRemove, confirmSetupAll: $confirmSetupAll)
+                ActionBar(selection: active, showLog: $showLog, confirmRemove: $confirmRemove, confirmSetupAll: $confirmSetupAll)
             }
         }
         .id(lang)
@@ -109,9 +112,9 @@ struct ContentView: View {
         .sheet(isPresented: $showLog) { LogView() }
         .sheet(isPresented: $showDisclaimer) { DisclaimerSheet() }
         .onAppear { if !accepted { showDisclaimer = true } }
-        .confirmationDialog(tr("Auto-Sync in \(selection.count) Fork(s) entfernen?", "Remove auto-sync from \(selection.count) fork(s)?"),
+        .confirmationDialog(tr("Auto-Sync in \(removable.count) Fork(s) entfernen?", "Remove auto-sync from \(removable.count) fork(s)?"),
                             isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button(tr("Entfernen", "Remove"), role: .destructive) { Task { await store.remove(selection) } }
+            Button(tr("Entfernen", "Remove"), role: .destructive) { Task { await store.remove(removable) } }
         }
         .confirmationDialog(tr("Auto-Sync in \(store.setupAllIDs.count) Forks einrichten?", "Set up auto-sync in \(store.setupAllIDs.count) forks?"),
                             isPresented: $confirmSetupAll, titleVisibility: .visible) {
@@ -120,9 +123,13 @@ struct ContentView: View {
             }
         } message: {
             Text(tr("Schreibt in jeden Fork ohne Auto-Sync die Datei .github/workflows/upstream-sync.yml. Der erste Lauf erfolgt zum eingestellten Zeitplan.",
-                    "Writes .github/workflows/upstream-sync.yml into every fork without auto-sync. The first run happens at the configured schedule."))
+                    "Writes .github/workflows/upstream-sync.yml into every fork without auto-sync. The first run happens at the configured schedule.")
+                 + " " + tr("Forks, die hinterherhängen, werden dabei sofort gesynct, soweit der Modus es erlaubt.",
+                            "Forks that are behind are synced right away where the mode allows it."))
         }
     }
+
+    private var removable: Set<String> { Set(visible.filter { selection.contains($0.id) && $0.hasAutoSync }.map(\.id)) }
 
     private var list: some View {
         Group {
@@ -136,7 +143,7 @@ struct ContentView: View {
                                        description: Text(store.forks.isEmpty ? tr("Dein Account hat keine Forks.", "Your account has no forks.") : tr("Kein Fork passt zum Filter.", "No fork matches the filter.")))
             } else {
                 List(visible, selection: $selection) { fork in
-                    ForkRow(fork: fork, busy: store.busy.contains(fork.id)) { Task { await store.syncNow([fork.id]) } }
+                    ForkRow(fork: fork, busy: store.busy.contains(fork.id), working: store.working) { Task { await store.syncNow([fork.id]) } }
                         .tag(fork.id)
                         .simultaneousGesture(TapGesture(count: 2).onEnded { NSWorkspace.shared.open(fork.url) })
                         .contextMenu {
@@ -155,6 +162,7 @@ struct ContentView: View {
 struct ForkRow: View {
     let fork: Fork
     let busy: Bool
+    var working = false
     let onSync: () -> Void
 
     var body: some View {
@@ -179,6 +187,7 @@ struct ForkRow: View {
             if fork.syncFailed && fork.behind > 0 && fork.error == nil && !busy {
                 Button(action: onSync) { Label(tr("Syncen", "Sync"), systemImage: "arrow.triangle.2.circlepath") }
                     .controlSize(.small)
+                    .disabled(working)
                     .help(tr("Auto-Sync ist fehlgeschlagen (z. B. weil das Original Workflow-Dateien ändert). Jetzt mit deinem Login syncen.", "Auto-sync failed (e.g. because the original changes workflow files). Sync now with your login."))
             }
             Group {
@@ -187,7 +196,7 @@ struct ForkRow: View {
                     Label("Auto · \(mode.short)", systemImage: "bolt.fill")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(fork.needsAdapt ? .orange : .green)
-                        .help(fork.needsAdapt ? tr("Eigene Commits vorhanden – Modus „auto“ empfohlen", "Has own commits – mode “auto” recommended") : tr("Täglicher Auto-Sync aktiv", "Daily auto-sync active"))
+                        .help(fork.needsAdapt ? tr("Eigene Commits vorhanden – Modus „auto“ empfohlen", "Has own commits – mode “auto” recommended") : tr("Auto-Sync aktiv", "Auto-sync active"))
                 } else {
                     Text("–").foregroundStyle(.tertiary)
                 }
@@ -219,24 +228,24 @@ struct ActionBar: View {
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
                     Label(tr("\(adaptCount) umstellen", "Switch \(adaptCount)"), systemImage: "wand.and.stars")
-                }.help(tr("ff-Forks mit eigenen Commits auf Modus „auto“ umstellen (eigene Commits bleiben erhalten)", "Switch ff forks that have own commits to mode “auto” (own commits are kept)"))
+                }.disabled(store.working).help(tr("ff-Forks mit eigenen Commits auf Modus „auto“ umstellen (eigene Commits bleiben erhalten)", "Switch ff forks that have own commits to mode “auto” (own commits are kept)"))
             }
             Button { showLog = true } label: { Image(systemName: "list.bullet.rectangle") }.help(tr("Protokoll", "Log"))
             Button { Task { await store.syncNow(selection) } } label: { Label(tr("Syncen", "Sync"), systemImage: "play.fill") }
-                .disabled(selection.isEmpty)
+                .disabled(selection.isEmpty || store.working)
                 .help(tr("Sofort synchronisieren (eigene Commits bleiben erhalten)", "Sync now (own commits are kept)"))
             Button(role: .destructive) { confirmRemove = true } label: { Image(systemName: "trash") }.help(tr("Auto-Sync entfernen", "Remove auto-sync"))
-                .disabled(!hasSync)
+                .disabled(!hasSync || store.working)
             Button { confirmSetupAll = true } label: {
                 Label(tr("Alle einrichten (\(store.setupAllIDs.count))", "Set up all (\(store.setupAllIDs.count))"), systemImage: "bolt.badge.checkmark")
             }
-            .disabled(store.setupAllIDs.isEmpty || !store.schedule.isValid)
+            .disabled(store.setupAllIDs.isEmpty || !store.schedule.isValid || store.working)
             .help(tr("Auto-Sync in allen Forks einrichten, die noch keinen haben", "Set up auto-sync in every fork that has none yet"))
             Button { Task { await store.install(selection, mode: store.modeChoice) } } label: {
                 Label(tr("Einrichten", "Set up"), systemImage: "bolt.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(selection.isEmpty || !store.schedule.isValid)
+            .disabled(selection.isEmpty || !store.schedule.isValid || store.working)
         }
         .padding(12)
         .background(.bar)
@@ -287,7 +296,11 @@ struct ErrorView: View {
 
     var body: some View {
         ContentUnavailableView {
-            Label(tr("Nicht bei GitHub angemeldet", "Not signed in to GitHub"), systemImage: "person.crop.circle.badge.exclamationmark")
+            if store.fatalIsAuth || store.deviceCode != nil {
+                Label(tr("Nicht bei GitHub angemeldet", "Not signed in to GitHub"), systemImage: "person.crop.circle.badge.exclamationmark")
+            } else {
+                Label(tr("Laden fehlgeschlagen", "Loading failed"), systemImage: "exclamationmark.triangle")
+            }
         } description: {
             if let dc = store.deviceCode {
                 Text(tr("Gib diesen Code auf GitHub ein:", "Enter this code on GitHub:"))

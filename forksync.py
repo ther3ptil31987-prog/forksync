@@ -8,7 +8,7 @@ Zum Schreiben von Workflow-Dateien braucht gh den Scope "workflow":
 Befehle:
     status   [repo ...]   Alle Forks mit Status anzeigen (eigene Commits? hinterher?)
     install  [repo ...]   Auto-Sync-Workflow in gewaehlten Forks einrichten
-    adapt                 Forks mit Modus "ff", die eigene Commits haben, auf "pr" umstellen
+    adapt                 Forks mit Modus "ff", die eigene Commits haben, auf "auto" umstellen
     run      [repo ...]   Sync-Workflow im Fork anstossen
     sync     [repo ...]   Sofort mit dem eigenen Login syncen (auch bei geaenderten Workflow-Dateien)
     remove   [repo ...]   Workflow wieder entfernen
@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 WF_NAME = "upstream-sync.yml"
 WF_PATH = f".github/workflows/{WF_NAME}"
@@ -52,54 +53,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: @@BRANCH@@
+          ref: '@@BRANCH@@'
           fetch-depth: 0
       - name: Sync
         env:
           GH_TOKEN: ${{ github.token }}
+          MODE: '@@MODE@@'
+          BRANCH: '@@BRANCH@@'
+          UPSTREAM: '@@UPSTREAM@@'
+          UPSTREAM_BRANCH: '@@UPSTREAM_BRANCH@@'
         run: |
           set -e
-          git remote add upstream "https://github.com/@@UPSTREAM@@.git"
-          git fetch upstream "@@UPSTREAM_BRANCH@@"
-          UP="upstream/@@UPSTREAM_BRANCH@@"
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch upstream "$UPSTREAM_BRANCH"
+          UP="upstream/$UPSTREAM_BRANCH"
 
           if git merge-base --is-ancestor "$UP" HEAD; then
             echo "Schon aktuell"; exit 0
           fi
 
           if git merge-base --is-ancestor HEAD "$UP"; then
-            if git push origin "$UP:refs/heads/@@BRANCH@@"; then
+            if git push origin "$UP:refs/heads/$BRANCH"; then
               echo "Fast-Forward durchgefuehrt"; exit 0
             fi
-            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null; then
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null; then
               echo "Fast-Forward durchgefuehrt (GitHub-Sync-API)"; exit 0
             fi
             echo "::error::Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
             exit 1
           fi
 
-          if [ "@@MODE@@" = "ff" ]; then
+          if [ "$MODE" = "ff" ]; then
             echo "::warning::Fork hat eigene Commits, Fast-Forward nicht moeglich (Modus ff). Nichts geaendert."
             exit 0
           fi
 
-          if [ "@@MODE@@" = "auto" ]; then
+          if [ "$MODE" = "auto" ]; then
             git config user.name "forksync"
             git config user.email "forksync@users.noreply.github.com"
             if git merge --no-edit "$UP"; then
-              if git push origin "HEAD:refs/heads/@@BRANCH@@"; then
+              if git push origin "HEAD:refs/heads/$BRANCH"; then
                 echo "Original eingemergt, eigene Commits bleiben erhalten"; exit 0
               fi
-              git reset --hard "origin/@@BRANCH@@"
-              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+              git reset --hard "origin/$BRANCH"
+              if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null 2>&1; then
                 echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
               fi
               echo "::error::Merge sauber, aber Push abgelehnt (z. B. aendert das Original .github/workflows). In der App 'Syncen' nutzen."
               exit 1
             fi
             git merge --abort 2>/dev/null || true
-            git reset --hard "origin/@@BRANCH@@"
-            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="@@BRANCH@@" > /dev/null 2>&1; then
+            git reset --hard "origin/$BRANCH"
+            if gh api "repos/$GITHUB_REPOSITORY/merge-upstream" -X POST -f branch="$BRANCH" > /dev/null 2>&1; then
               echo "Original eingemergt (GitHub-Sync-API), eigene Commits bleiben erhalten"; exit 0
             fi
             echo "::warning::Automatischer Merge nicht moeglich (Konflikt), Pull Request wird erstellt."
@@ -110,9 +115,9 @@ jobs:
             exit 1
           fi
           if [ -z "$(gh pr list --repo "$GITHUB_REPOSITORY" --head upstream-sync --state open --json number -q '.[].number')" ]; then
-            gh pr create --repo "$GITHUB_REPOSITORY" --base "@@BRANCH@@" --head upstream-sync \\
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BRANCH" --head upstream-sync \\
               --title "Sync with upstream" \\
-              --body "Automatisch erstellt von forksync: neue Aenderungen aus @@UPSTREAM@@."
+              --body "Automatisch erstellt von forksync: neue Aenderungen aus $UPSTREAM."
           fi
 """
 
@@ -172,21 +177,27 @@ def inspect(repo: dict) -> dict:
             info["error"] = "kein Original gefunden"
             return info
         info["parent"] = parent["full_name"]
-        info["pbranch"] = parent["default_branch"]
+        # Gleichnamigen Branch des Originals vergleichen (wie die App), sonst dessen Standard-Branch.
+        branch = quote(info["branch"])
+        try:
+            api(f"repos/{parent['full_name']}/branches/{branch}")
+            info["pbranch"] = info["branch"]
+        except GhError:
+            info["pbranch"] = parent["default_branch"]
 
         # base = Original, head = Fork:
         #   ahead_by  = eigene Commits im Fork
         #   behind_by = neue Commits im Original
         cmp_ = api(f"repos/{parent['full_name']}/compare/"
-                   f"{parent['default_branch']}...{owner}:{info['branch']}")
+                   f"{quote(info['pbranch'])}...{owner}:{branch}")
         info["ahead"] = cmp_["ahead_by"]
         info["behind"] = cmp_["behind_by"]
 
         try:
-            f = api(f"repos/{full}/contents/{WF_PATH}?ref={info['branch']}")
+            f = api(f"repos/{full}/contents/{WF_PATH}?ref={quote(info['branch'], safe='')}")
             text = base64.b64decode(f["content"]).decode()
             m = re.search(r"# mode: (\w+)", text)
-            info["wf"] = {"sha": f["sha"], "mode": m.group(1) if m else "?"}
+            info["wf"] = {"sha": f["sha"], "mode": m.group(1) if m else "?", "text": text}
         except GhError:
             pass  # Workflow nicht vorhanden
     except GhError as e:
@@ -287,11 +298,26 @@ def confirm(question: str, yes: bool) -> None:
 # ------------------------------------------------------------------------ Aktionen
 
 def render(i: dict, mode: str, cron: str) -> str:
+    # Werte landen einfach quotiert in `env:`/`with:`, nie direkt im Shell-Skript.
+    def y(s: str) -> str:
+        return s.replace("'", "''")
     return (WORKFLOW.replace("@@MODE@@", mode)
             .replace("@@CRON@@", cron)
-            .replace("@@UPSTREAM@@", i["parent"])
-            .replace("@@UPSTREAM_BRANCH@@", i["pbranch"])
-            .replace("@@BRANCH@@", i["branch"]))
+            .replace("@@UPSTREAM@@", y(i["parent"]))
+            .replace("@@UPSTREAM_BRANCH@@", y(i["pbranch"]))
+            .replace("@@BRANCH@@", y(i["branch"])))
+
+
+def is_safe(s: str) -> bool:
+    """Namen, die GitHub Actions als Ausdruck auswerten wuerde oder die das YAML sprengen."""
+    return "${{" not in s and "\n" not in s and "\r" not in s
+
+
+def merge_upstream(i: dict) -> str:
+    """Sync mit dem eigenen Login (GitHubs merge-upstream). Liefert den Ergebnistext, wirft GhError."""
+    r = api(f"repos/{i['full']}/merge-upstream", "POST", {"branch": i["branch"]}) or {}
+    return {"none": "schon aktuell", "fast-forward": "Fast-Forward durchgefuehrt"}.get(
+        r.get("merge_type"), "Original eingemergt, eigene Commits bleiben erhalten")
 
 
 def dispatch(full: str, branch: str) -> bool:
@@ -319,15 +345,21 @@ def do_install(i: dict, mode: str | None, cron: str, run: bool) -> None:
     if "error" in i:
         print(f"- {i['name']}: uebersprungen ({i['error']})")
         return
+    if not (is_safe(i["branch"]) and is_safe(i["pbranch"])):
+        print(f"- {i['name']}: uebersprungen (Branch-Name nicht unterstuetzt)")
+        return
     mode = mode or recommend(i)
+    text = render(i, mode, cron)
     body = {
         "message": f"Add upstream sync workflow (forksync, mode {mode})",
-        "content": base64.b64encode(render(i, mode, cron).encode()).decode(),
+        "content": base64.b64encode(text.encode()).decode(),
     }
     if i["wf"]:
         body["sha"] = i["wf"]["sha"]
     try:
-        api(f"repos/{i['full']}/contents/{WF_PATH}", "PUT", body)
+        # Unveraenderte Datei nicht erneut committen (sonst waechst die Historie bei jedem Einrichten).
+        if not (i["wf"] and i["wf"].get("text") == text):
+            api(f"repos/{i['full']}/contents/{WF_PATH}", "PUT", body)
     except GhError as e:
         hint = "  -> `gh auth refresh -s workflow` ausfuehren" if "workflow" in str(e).lower() else ""
         print(f"- {i['name']}: FEHLER beim Schreiben: {str(e).splitlines()[0]}{hint}")
@@ -347,6 +379,12 @@ def do_install(i: dict, mode: str | None, cron: str, run: bool) -> None:
                          "and approve pull requests' manuell aktivieren")
     if not enable_workflow(i["full"]):
         notes.append("Workflow konnte nicht aktiviert werden (Reiter 'Actions' des Forks)")
+    # Sofort syncen, aber nur wo der Modus es erlaubt (ff/pr mergen nie in einen Fork mit eigenen Commits).
+    if i.get("behind", 0) > 0 and (mode == "auto" or i.get("ahead", 0) == 0):
+        try:
+            notes.append(merge_upstream(i))
+        except GhError as e:
+            notes.append(f"Sync fehlgeschlagen: {str(e).splitlines()[0]}")
     if run and not dispatch(i["full"], i["branch"]):
         notes.append("Testlauf konnte nicht gestartet werden (spaeter `run` nutzen)")
 
@@ -398,10 +436,7 @@ def cmd_sync(args, infos):
             print(f"- {i['name']}: uebersprungen ({i['error']})")
             continue
         try:
-            r = api(f"repos/{i['full']}/merge-upstream", "POST", {"branch": i["branch"]}) or {}
-            t = r.get("merge_type")
-            print(f"- {i['name']}: " + {"none": "schon aktuell", "fast-forward": "Fast-Forward durchgefuehrt"}.get(
-                t, "Original eingemergt, eigene Commits bleiben erhalten"))
+            print(f"- {i['name']}: {merge_upstream(i)}")
         except GhError as e:
             print(f"- {i['name']}: FEHLER: {str(e).splitlines()[0]}")
 
@@ -426,7 +461,7 @@ def main() -> None:
     for name, fn, helptext in [
         ("status", cmd_status, "Forks und Status anzeigen"),
         ("install", cmd_install, "Auto-Sync einrichten"),
-        ("adapt", cmd_adapt, "ff-Forks mit eigenen Commits auf pr umstellen"),
+        ("adapt", cmd_adapt, "ff-Forks mit eigenen Commits auf auto umstellen"),
         ("run", cmd_run, "Sync-Workflow im Fork starten"),
         ("sync", cmd_sync, "Sofort mit eigenem Login syncen (ohne Workflow)"),
         ("remove", cmd_remove, "Auto-Sync entfernen"),

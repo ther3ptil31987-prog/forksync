@@ -30,8 +30,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>ForkSync</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2.0</string>
-  <key>CFBundleVersion</key><string>5</string>
+  <key>CFBundleShortVersionString</key><string>1.2.1</string>
+  <key>CFBundleVersion</key><string>6</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
@@ -52,6 +52,7 @@ if [[ "${1:-}" == "--install" ]]; then
 fi
 if [[ "${1:-}" == "--release" ]]; then
   [[ -n "$IDENTITY" ]] || { echo "Kein Developer-ID-Zertifikat gefunden"; exit 1; }
+  [[ -n "$CLIENT_ID" ]] || { echo "OAuth-Client-ID fehlt (client_id.txt oder FORKSYNC_CLIENT_ID) - Release haette keinen Anmelden-Knopf"; exit 1; }
   # shellcheck disable=SC1090
   source ~/.config/forksync/notary.env
   [[ -n "${NOTARY_ISSUER:-}" ]] || { echo "NOTARY_ISSUER fehlt in ~/.config/forksync/notary.env"; exit 1; }

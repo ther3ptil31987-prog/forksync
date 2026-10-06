@@ -46,7 +46,22 @@ struct Schedule: Codable, Equatable {
     var isValid: Bool {
         guard frequency == .custom else { return true }
         let fields = customCron.split(separator: " ")
-        return fields.count == 5 && fields.allSatisfy { $0.range(of: #"^[0-9*/,\-]+$"#, options: .regularExpression) != nil }
+        let bounds = [0...59, 0...23, 1...31, 1...12, 0...6]
+        return fields.count == 5 && zip(fields, bounds).allSatisfy { Schedule.fieldValid(String($0), $1) }
+    }
+
+    /// Ein Cron-Feld: Liste aus `*`, Zahl oder Bereich `a-b`, jeweils optional mit Schrittweite `/n`.
+    private static func fieldValid(_ field: String, _ bounds: ClosedRange<Int>) -> Bool {
+        let parts = field.split(separator: ",", omittingEmptySubsequences: false)
+        return parts.allSatisfy { part in
+            let s = part.split(separator: "/", omittingEmptySubsequences: false)
+            guard (1...2).contains(s.count) else { return false }
+            if s.count == 2 { guard let step = Int(s[1]), step > 0 else { return false } }
+            if s[0] == "*" { return true }
+            let r = s[0].split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
+            guard (1...2).contains(r.count), r.allSatisfy({ $0.map(bounds.contains) == true }) else { return false }
+            return r.count == 1 || r[0]! <= r[1]!
+        }
     }
 
     var summary: String {
