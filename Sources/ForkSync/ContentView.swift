@@ -234,6 +234,11 @@ struct ActionBar: View {
             Button { Task { await store.syncNow(selection) } } label: { Label(tr("Syncen", "Sync"), systemImage: "play.fill") }
                 .disabled(selection.isEmpty || store.working)
                 .help(tr("Sofort synchronisieren (eigene Commits bleiben erhalten)", "Sync now (own commits are kept)"))
+            Button { Task { await store.syncNow(store.syncAllIDs) } } label: {
+                Label(tr("Alle syncen (\(store.syncAllIDs.count))", "Sync all (\(store.syncAllIDs.count))"), systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(store.syncAllIDs.isEmpty || store.working)
+            .help(tr("Alle Forks, die hinterherhängen, sofort syncen (eigene Commits bleiben erhalten)", "Sync every fork that is behind right now (own commits are kept)"))
             Button(role: .destructive) { confirmRemove = true } label: { Image(systemName: "trash") }.help(tr("Auto-Sync entfernen", "Remove auto-sync"))
                 .disabled(!hasSync || store.working)
             Button { confirmSetupAll = true } label: {

@@ -239,6 +239,9 @@ final class Store: ObservableObject {
     /// Alle Forks ohne Auto-Sync (und ohne Fehler) für „Alle einrichten“.
     var setupAllIDs: Set<String> { Set(forks.filter { !$0.hasAutoSync && $0.error == nil }.map(\.id)) }
 
+    /// Alle Forks, die hinter dem Original liegen (und keinen Fehler haben), für „Alle syncen“.
+    var syncAllIDs: Set<String> { Set(forks.filter { $0.behind > 0 && $0.error == nil }.map(\.id)) }
+
     func install(_ ids: Set<String>, mode: SyncMode?, runAfter: Bool = true) async {
         guard !working else { return }
         working = true
