@@ -58,6 +58,21 @@ enum GH {
     @discardableResult
     static func api(_ path: String, method: String = "GET", body: [String: Any]? = nil,
                     paginate: Bool = false) async throws -> Any? {
+        let start = Date()
+        let via = Auth.token != nil ? "app" : "gh"
+        let keys = body.map { " body-keys=" + $0.keys.sorted().joined(separator: ",") } ?? ""
+        do {
+            let r = try await apiRaw(path, method: method, body: body, paginate: paginate)
+            let n = (r as? [Any])?.count.description ?? ((r as? [String: Any]).map { "obj(\($0.count) keys)" } ?? "nil")
+            DebugLog.write("api", "\(method) \(path) via=\(via)\(keys) ok result=\(n) \(Int(Date().timeIntervalSince(start) * 1000))ms")
+            return r
+        } catch {
+            DebugLog.write("api", "\(method) \(path) via=\(via)\(keys) FAIL \(error.localizedDescription.replacingOccurrences(of: "\n", with: " | ")) \(Int(Date().timeIntervalSince(start) * 1000))ms")
+            throw error
+        }
+    }
+
+    private static func apiRaw(_ path: String, method: String, body: [String: Any]?, paginate: Bool) async throws -> Any? {
         if let token = Auth.token {
             return try await Auth.request(path, method: method, body: body, paginate: paginate, token: token)
         }

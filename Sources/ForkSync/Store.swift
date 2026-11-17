@@ -77,6 +77,7 @@ final class Store: ObservableObject {
     }
 
     func add(_ kind: LogLine.Kind, _ text: String) {
+        DebugLog.write("ui-\(kind)", text)
         var l = log
         l.append(LogLine(kind: kind, text: text))
         if l.count > LogStore.limit { l.removeFirst(l.count - LogStore.limit) }
@@ -311,11 +312,14 @@ final class Store: ObservableObject {
         guard !working else { return }
         working = true
         defer { working = false }
+        DebugLog.write("sync", "syncNow start: \(ids.count) ids requested")
         for f in forks where ids.contains(f.id) && f.error == nil {
+            DebugLog.write("sync", "\(f.full) branch=\(f.branch) behind=\(f.behind) ahead=\(f.ahead)")
             busy.insert(f.id)
             await mergeUpstream(f)
             busy.remove(f.id)
         }
+        DebugLog.write("sync", "syncNow done, refreshing")
         await refresh()
     }
 
