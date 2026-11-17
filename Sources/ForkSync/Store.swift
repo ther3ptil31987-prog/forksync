@@ -13,6 +13,9 @@ final class Store: ObservableObject {
     @Published var fatalIsAuth = true
     /// Eine Fork-Aktion (Einrichten/Syncen/Entfernen) läuft; weitere werden so lange gesperrt.
     @Published var working = false
+    /// Fortschritt eines laufenden Syncs (nil, wenn keiner läuft); `current == nil` heißt: Liste wird neu geladen.
+    struct SyncProgress { var done: Int; var total: Int; var current: String? }
+    @Published var syncProgress: SyncProgress?
     private var refreshAgain = false
     @Published var missingWorkflowScope = false
     @Published var modeChoice: SyncMode = .auto
@@ -313,12 +316,16 @@ final class Store: ObservableObject {
         working = true
         defer { working = false }
         DebugLog.write("sync", "syncNow start: \(ids.count) ids requested")
-        for f in forks where ids.contains(f.id) && f.error == nil {
+        let todo = forks.filter { ids.contains($0.id) && $0.error == nil }
+        defer { syncProgress = nil }
+        for (i, f) in todo.enumerated() {
+            syncProgress = SyncProgress(done: i, total: todo.count, current: f.name)
             DebugLog.write("sync", "\(f.full) branch=\(f.branch) behind=\(f.behind) ahead=\(f.ahead)")
             busy.insert(f.id)
             await mergeUpstream(f)
             busy.remove(f.id)
         }
+        syncProgress = SyncProgress(done: todo.count, total: todo.count, current: nil)
         DebugLog.write("sync", "syncNow done, refreshing")
         await refresh()
     }

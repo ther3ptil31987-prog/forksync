@@ -225,6 +225,15 @@ struct ActionBar: View {
             .fixedSize()
             ScheduleButton()
             Spacer(minLength: 8)
+            if let p = store.syncProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).frame(width: 90)
+                    Text(p.current.map { tr("Synce \(p.done + 1)/\(p.total): \($0)", "Syncing \(p.done + 1)/\(p.total): \($0)") }
+                         ?? tr("Lade neu …", "Reloading …"))
+                        .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: 240, alignment: .leading)
+                }
+            }
             if adaptCount > 0 {
                 Button { Task { await store.adaptAll() } } label: {
                     Label(tr("\(adaptCount) umstellen", "Switch \(adaptCount)"), systemImage: "wand.and.stars")
