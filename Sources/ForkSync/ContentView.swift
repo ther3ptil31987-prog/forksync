@@ -12,12 +12,37 @@ enum Page: String, CaseIterable, Identifiable {
     }
 }
 
+/// Wo die Suche im Reiter „Forks“ nachsieht: im eigenen Fork, im Original oder in beidem.
+enum SearchScope: String, CaseIterable, Identifiable {
+    case both, fork, original
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .both: tr("Beides", "Both")
+        case .fork: tr("Fork", "Fork")
+        case .original: tr("Original", "Original")
+        }
+    }
+
+    func matches(_ f: Fork, _ text: String) -> Bool {
+        guard !text.isEmpty else { return true }
+        let inFork = f.full.localizedCaseInsensitiveContains(text)
+        let inOriginal = f.parent?.localizedCaseInsensitiveContains(text) ?? false
+        switch self {
+        case .both: return inFork || inOriginal
+        case .fork: return inFork
+        case .original: return inOriginal
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var store: Store
     @AppStorage(Lang.key) private var lang = Lang.system.rawValue
     @State private var selection = Set<String>()
     @State private var filter: Filter = .all
     @State private var search = ""
+    @State private var searchScope: SearchScope = .both
     @State private var showLog = false
     @State private var page: Page = .forks
     @AppStorage("forksync.disclaimerAccepted") private var accepted = false
@@ -26,7 +51,7 @@ struct ContentView: View {
     @State private var confirmSetupAll = false
 
     private var visible: [Fork] {
-        store.forks.filter { filter.matches($0) && (search.isEmpty || $0.full.localizedCaseInsensitiveContains(search)) }
+        store.forks.filter { filter.matches($0) && searchScope.matches($0, search) }
     }
 
     /// Aktionen wirken nur auf Forks, die gerade sichtbar sind – nicht auf eine frühere Auswahl hinter Filter/Suche.
@@ -69,6 +94,9 @@ struct ContentView: View {
         }
         .id(lang)
         .searchable(text: $search, prompt: tr("Forks durchsuchen", "Search forks"))
+        .searchScopes($searchScope, activation: .onSearchPresentation) {
+            ForEach(page == .forks ? SearchScope.allCases : []) { Text($0.title).tag($0) }
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button { showDisclaimer = true } label: { Image(systemName: "info.circle") }
